@@ -2,11 +2,11 @@
 
 ## The Problem
 
-Dependency injection is currently done three different ways in the same codebase, with no consistency across modules.
+Right now there are three different ways dependencies get created in the same codebase. No single approach won.
 
 **Pattern 1 — Init injection with default values**
 
-Some coordinators and factories declare dependencies in `init` with concrete defaults. `AppCoordinator` takes 8 parameters. `CardsFactory` takes 13. This approach is structurally correct but breaks down as the team grows — every new feature adds more parameters, and the init signature becomes a maintenance burden nobody wants to touch.
+Some coordinators take their dependencies through `init`, which is the right idea. But it got out of hand. `AppCoordinator` takes 8 parameters. `CardsFactory` takes 13. Nobody wants to touch those inits. New features get added by tacking on another default parameter and hoping nothing breaks.
 
 ```swift
 // CardsFactory today — 13 parameters, grows with every feature
@@ -27,7 +27,7 @@ init(user: User,
 
 **Pattern 2 — Direct singleton access**
 
-Despite having init injection in some places, most classes bypass it entirely and reach for globals directly. The init signature lies — it says a class needs 3 things but the body secretly uses 5 more.
+Even in classes that do use init injection, the body often reaches for globals anyway. The init signature lies — it says a class needs 3 things, but reading the implementation reveals 5 more hidden dependencies.
 
 ```swift
 // Hidden dependencies — not visible in init, not swappable in tests
@@ -39,7 +39,7 @@ ZendeskManager.shared.showChatView(...)
 
 **Pattern 3 — No injection at all**
 
-Some classes instantiate their own dependencies inline with no way to override them.
+Some classes just create their own dependencies inline. No protocol, no override, no way in for a test.
 
 ```swift
 let repository = CardsRepository()  // created inside the class, not injectable
@@ -47,15 +47,11 @@ let repository = CardsRepository()  // created inside the class, not injectable
 
 ---
 
-## Why This Matters for Testing
+## Why This Makes Testing Hard
 
-With the current approach, writing a unit test for a ViewModel requires:
+To unit test a ViewModel today you need a real `Session.shared` with valid state, LaunchDarkly initialized and returning the right flags, and repositories that make real network calls. None of those are controllable in a test.
 
-1. Building real repositories that make real network calls
-2. Having a valid `Session.shared` state
-3. Having LaunchDarkly initialized and returning the right flags
-
-None of these are controllable in a test. The result is that most of the app has no unit tests — not because the team doesn't want to write them, but because the architecture makes it nearly impossible.
+That's why most of the app has no unit tests — not because nobody wanted to write them, but because the architecture makes it nearly impossible.
 
 ```swift
 // Cannot test this today — Session.shared and RemoteConfigurationManager.shared
@@ -68,39 +64,19 @@ func test_addToWallet_hiddenWhenFlagDisabled() {
 
 ---
 
-## Why Consistency Matters for a Growing Team
+## Why Consistency Matters
 
-When three patterns coexist, every developer makes a different choice. New code copies the nearest example — sometimes init injection, sometimes `.shared`, sometimes inline instantiation. Over time the codebase becomes impossible to reason about. A new team member cannot look at a class and understand what it depends on without reading every line.
+Three patterns living side by side means every developer makes a different judgment call. New code copies the nearest example — sometimes init injection, sometimes `.shared`, sometimes inline. Over time nobody can look at a class and know what it actually depends on without reading every line.
 
-The goal is one pattern, everywhere, that any developer can follow without making a judgment call.
-
----
-
-## Goal
-
-Replace all `.shared` singleton access with explicit, protocol-based dependencies. Every class declares what it needs via `@Inject` — visible at the top of the class, enforced by the compiler, swappable in tests.
-
-No DI framework. No multiple init parameters. One place to see all dependencies.
+The goal is one pattern that any engineer can follow without having to think about it.
 
 ---
 
-## Architect's Note
+## The Design
 
-This approach trades one form of global state (`.shared` singletons) for another (`Dependencies.current`). That is an honest trade-off, not a perfect solution. The difference is that `Dependencies.current` is a value type — fully replaceable in tests with one line, with no side effects. Classic singletons are reference types with internal state that cannot be reset between tests.
+### `DependencyValues` — one struct, everything in one place
 
-`@Inject` also makes the trade-off visible. When you see `@Inject` at the top of a class you know the class depends on a global container. With `.shared` that dependency is hidden inside method bodies and impossible to find without reading every line.
-
-For a team that will grow, the most important property of a DI system is not theoretical purity — it is that every developer follows the same pattern without thinking about it. `@Inject` with `DependencyValues` achieves that with minimal infrastructure.
-
-The limitation to be aware of: parallel tests that mutate `Dependencies.current` can interfere with each other. Mitigate by always resetting in `tearDown()` and avoiding shared mutable state in mock implementations.
-
----
-
-## Design
-
-### 1. `DependencyValues`  one struct, everything visible
-
-All dependencies are defined in a single struct. This is the only place you need to look to understand what the app depends on.
+All dependencies live in a single struct. This is the only place you need to look to understand what the app depends on.
 
 ```swift
 // Core/DI/DependencyValues.swift
@@ -127,9 +103,9 @@ struct DependencyValues {
 }
 ```
 
-### 2. `Dependencies` — the single global entry point
+### `Dependencies` — the single global entry point
 
-Set once at app startup. A struct, not a class — fully replaceable in tests.
+Set once at app startup. A struct, not a class — which means the whole thing is replaceable in tests.
 
 ```swift
 // Core/DI/Dependencies.swift
@@ -139,7 +115,7 @@ enum Dependencies {
 }
 ```
 
-### 3. `@Inject` — resolves via KeyPath, fully type-safe
+### `@Inject` — resolves via KeyPath, fully type-safe
 
 ```swift
 // Core/DI/Inject.swift
@@ -158,7 +134,7 @@ struct Inject<T> {
 }
 ```
 
-### 4. Usage — dependencies declared at the top of every class
+### Usage — dependencies declared at the top of every class
 
 ```swift
 final class CardsViewModel: ObservableObject {
@@ -182,7 +158,7 @@ final class CardsViewModel: ObservableObject {
 
 ## App Startup
 
-SDKs must be started before `DependencyValues` is configured. Defaults are lightweight wrappers — never the SDK initialization itself.
+SDKs must be started before `DependencyValues` is configured. The defaults in `DependencyValues` are lightweight wrappers — they assume the SDK is already running, they don't start it.
 
 ```swift
 // AppDelegate.swift
@@ -225,17 +201,16 @@ AppDelegate
 
 ## Testing
 
-Replace `Dependencies.current` in `setUp()`. Reset in `tearDown()`. Override only what the test needs — everything else uses the default from `DependencyValues`.
+Replace `Dependencies.current` in `setUp()`, reset it in `tearDown()`. Override only what the test needs — everything else uses the real default from `DependencyValues`.
 
 ```swift
 final class CardsViewModelTests: XCTestCase {
 
     override func tearDown() {
-        // Always reset after each test — prevents state leaking between tests
+        // Always reset — prevents state leaking between tests
         Dependencies.current = DependencyValues()
     }
 
-    // Test happy path — override only the repository
     func test_loadCards_returnsCards() async {
         var deps = DependencyValues()
         deps.cardsRepository = MockCardsRepository(cardList: .stub())
@@ -247,7 +222,6 @@ final class CardsViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.cards.isEmpty)
     }
 
-    // Test error path — repository fails, verify error state
     func test_loadCards_onFailure_showsError() async {
         var deps = DependencyValues()
         deps.cardsRepository = MockCardsRepository(shouldFail: true)
@@ -259,7 +233,6 @@ final class CardsViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.hasError)
     }
 
-    // Test feature flag — verify flag controls behaviour
     func test_addToWallet_hiddenWhenFlagDisabled() {
         var deps = DependencyValues()
         deps.featureFlags = MockFeatureFlagManager(addToWallet: false)
@@ -270,7 +243,6 @@ final class CardsViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isAddToWalletVisible)
     }
 
-    // Test logging — verify errors are logged
     func test_loadCards_onFailure_logsError() async {
         let mockLogger = MockLogger()
         var deps = DependencyValues()
@@ -289,7 +261,6 @@ final class CardsViewModelTests: XCTestCase {
 ### Mock examples
 
 ```swift
-// MockCardsRepository.swift
 final class MockCardsRepository: CardsRepositoryProtocol {
     private let cardList: CardList
     private let shouldFail: Bool
@@ -303,11 +274,8 @@ final class MockCardsRepository: CardsRepositoryProtocol {
         if shouldFail { throw .networkingUnknown }
         return cardList
     }
-
-    // Remaining protocol stubs omitted for brevity
 }
 
-// MockFeatureFlagManager.swift
 final class MockFeatureFlagManager: FeatureFlagProviding {
     var addToWallet: Bool
 
@@ -336,7 +304,7 @@ final class MockFeatureFlagManager: FeatureFlagProviding {
 
 1. Add the protocol property to `DependencyValues` with a default value
 2. Use `@Inject(\.newDependency)` in the class that needs it
-3. Add a mock implementation for tests
+3. Add a mock implementation in the test target
 
 The compiler enforces that the KeyPath exists — no runtime surprises.
 
@@ -344,10 +312,23 @@ The compiler enforces that the KeyPath exists — no runtime surprises.
 
 ## Performance
 
-Creating `DependencyValues` allocates lightweight wrapper objects — microseconds per object. This does not affect app launch time. The expensive work (SDK initialization) happens explicitly in `AppDelegate` before `DependencyValues` is created.
+Allocating `DependencyValues` creates lightweight wrapper objects — microseconds total. It does not affect launch time. The expensive work (SDK initialization) already happened in `AppDelegate` before `DependencyValues` is created.
 
 ---
 
-## Migration
+## Known Limitations
 
-Never do a bulk migration. Replace `.shared` access when a file is already being touched for another reason. New files must use `@Inject` from day one.
+### 1. Global mutable state
+`Dependencies.current` is a global. Tests that forget `tearDown()` corrupt state for every test that runs after them. The reset is a convention, not something the compiler enforces. If you ever run tests in parallel, this will bite you.
+
+### 2. No compile-time enforcement of `tearDown`
+The compiler can't tell you a test forgot to reset `Dependencies.current`. The failure shows up somewhere else — a different test behaving unexpectedly, hard to trace back to the original culprit.
+
+### 3. `@Inject` resolves at access, not at init
+A property wrapper reads `Dependencies.current` the first time it's accessed, not when the class is created. That means you can't override a dependency after an instance has already used it. If you instantiate a class and then swap `Dependencies.current`, the already-running instance won't see the change.
+
+### 4. `DependencyValues` grows with the codebase
+Every new repository, logger, and service adds another property. There's no way to group or scope them. As the team grows, this struct gets harder to navigate and every instantiation allocates the full set of defaults even when only a couple are needed.
+
+### 5. No session-scoped dependencies
+Everything in `DependencyValues` is effectively a singleton for the lifetime of `Dependencies.current`. There's no built-in concept of a dependency that should reset between user sessions — for example, clearing cached state after logout. That kind of lifecycle management has to be handled manually, outside the container.
