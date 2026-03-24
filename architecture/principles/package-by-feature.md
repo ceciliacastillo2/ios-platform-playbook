@@ -40,7 +40,7 @@ This means the folder structure follows what the code *does*, not what *type* of
 
 ---
 
-## Why — Team Topologies
+## Why Team Topologies
 
 Team Topologies (Skelton & Pais) describes four team types. The one relevant here is the **stream-aligned team**: a team aligned to a flow of work from a single domain Cards, Transactions, Auth  capable of delivering value end-to-end without depending on other teams.
 
@@ -50,7 +50,7 @@ Package by feature is the prerequisite for stream-aligned teams. The folder stru
 
 ---
 
-## Why — Large Codebase Organisation
+## Why Large Codebase Organisation
 
 In a large codebase, package by layer breaks down for three reasons:
 

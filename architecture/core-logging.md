@@ -10,7 +10,7 @@ Logging is inconsistent across the codebase. Over 102 files use `print()` or `de
 
 ## Goal
 
-Introduce a protocol-based logging system in `Core/Logging/` that is injectable, testable, and isolates all third-party dependencies behind protocols. Feature modules depend only on `Loggable` — they have no knowledge of `os.Logger`, `LuciqSDK`, or any other destination.
+Introduce a protocol-based logging system in `Core/Logging/` that is injectable, testable, and isolates all third-party dependencies behind protocols. Feature modules depend only on `Loggable`  they have no knowledge of `os.Logger`, `LuciqSDK`, or any other destination.
 
 Replacing the bug reporting provider requires changing one file. No feature code changes.
 
@@ -60,8 +60,8 @@ final class CardsRepository: CardsRepositoryProtocol {
 
 | Level | Forwarded to Luciq | When to use |
 |---|---|---|
-| `debug` | No | Development noise — stripped in Release |
-| `info` | Yes | Notable events — request completed, user logged in |
+| `debug` | No | Development noise stripped in Release |
+| `info` | Yes | Notable events request completed, user logged in |
 | `error` | Yes | Failures worth investigating |
 | `fault` | Yes | Critical unrecoverable failures |
 

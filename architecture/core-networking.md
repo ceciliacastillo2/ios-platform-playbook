@@ -54,6 +54,162 @@ Feature Code
 
 ---
 
+## Adding a New Endpoint
+
+Four touch points, always in this order:
+
+```mermaid
+flowchart TD
+    A["1 — Protocol\nFeatureRepositoryProtocol\nDeclare the method signature"]
+    B["2 — Router\nFeatureRouter enum\nAdd a new case with parameters"]
+    C["3 — Repository\nFeatureRepository\nImplement: build router, call asyncPerform, map error"]
+    D["4 — Caller\nViewModel / UseCase\nCall via protocol — no change to call site if signature is compatible"]
+
+    A --> B --> C --> D
+
+    style A fill:#1e3a5f,color:#fff,stroke:#3a7bd5
+    style B fill:#1e3a5f,color:#fff,stroke:#3a7bd5
+    style C fill:#1e3a5f,color:#fff,stroke:#3a7bd5
+    style D fill:#1e3a5f,color:#fff,stroke:#3a7bd5
+```
+
+### Step-by-step
+
+**Step 1 — Protocol** (`FeatureRepositoryProtocol.swift`)
+
+Declare what the feature needs. Domain types only — no networking types leak through.
+
+```swift
+protocol CardsRepositoryProtocol {
+    func fetchCards(with parameters: CardListParameters) async throws(CardsError) -> CardList
+}
+```
+
+**Step 2 — Router** (`CardsRouter.swift`)
+
+Add a case. The router owns: `urlPath`, `httpMethod`, `parameters` (query string), `body` (JSON encoded). `urlScheme`, `urlHost`, `headers`, and `authorization` come for free from `RouterExtension`.
+
+```swift
+enum CardsRouter: Router {
+    case cards(parameters: CardListParameters)
+
+    var urlPath: String {
+        switch self {
+        case .cards: return "/mobile/cards/v2"
+        }
+    }
+
+    var httpMethod: HTTPMethod {
+        switch self {
+        case .cards: return .get
+        }
+    }
+
+    var parameters: [String: Any]? {
+        switch self {
+        case .cards(let p): return p.dictionary
+        }
+    }
+}
+```
+
+**Step 3 — Repository** (`CardsRepository.swift`)
+
+Build the router case, call `asyncPerform`, map `ClaraNetworkingError` to your domain error.
+
+```swift
+final class CardsRepository: Repository, CardsRepositoryProtocol {
+    func fetchCards(with parameters: CardListParameters) async throws(CardsError) -> CardList {
+        do {
+            let dto: CardListResponseDTO = try await asyncPerform(
+                with: CardsRouter.cards(parameters: parameters),
+                responseType: .decodedObject()
+            )
+            return CardsMapper.map(dto)
+        } catch {
+            guard let networkingError = error as? ClaraNetworkingError else { throw .networkingUnknown }
+            throw CardsError(networkingError: networkingError, flow: .fetchCards)
+        }
+    }
+}
+```
+
+**Step 4 — Caller**
+
+The ViewModel or UseCase calls through the protocol. It never knows which router or concrete repository is used.
+
+```swift
+final class CardsViewModel: ObservableObject {
+    @Inject(\.cardsRepository) private var repository
+
+    func loadCards() async {
+        do {
+            cards = try await repository.fetchCards(with: .default)
+        } catch {
+            hasError = true
+        }
+    }
+}
+```
+
+---
+
+## Request Sequence
+
+What happens at runtime from the moment a ViewModel calls a repository method to the moment it gets data back.
+
+```mermaid
+sequenceDiagram
+    participant VM as ViewModel
+    participant Repo as CardsRepository
+    participant Base as Repository (base)
+    participant RE as RouterExtension
+    participant RP as RequestPerformer
+    participant US as URLSession
+    participant API as Clara API
+
+    VM->>Repo: fetchCards(with: parameters)
+    Repo->>Base: asyncPerform(with: CardsRouter.cards(...))
+    Base->>Base: notifyBackendInteraction()<br/>Session.shared.didInteractWithBackend()
+    Base->>RP: asyncPerform(using: router, responseType: .decodedObject())
+    RP->>RE: router.toURLRequest()
+    RE->>RE: Reads Session.shared.bearerToken<br/>Assembles URLComponents<br/>Sets Authorization header
+    RE-->>RP: URLRequest
+    RP->>US: URLSession.shared.data(for: urlRequest)
+    US->>API: HTTPS GET /mobile/cards/v2
+    API-->>US: 200 OK + JSON body
+    US-->>RP: (Data, URLResponse)
+    RP->>RP: process(data:response:error:)<br/>Checks HTTPStatusCode<br/>JSONDecoder.decode(CardListResponseDTO.self)
+    RP-->>Base: Result<CardListResponseDTO, ClaraNetworkingError>
+    Base->>Base: Unwraps Result<br/>Throws ClaraNetworkingError on failure
+    Base-->>Repo: CardListResponseDTO
+    Repo->>Repo: CardsMapper.map(dto)<br/>Catches + maps to CardsError
+    Repo-->>VM: CardList
+    VM->>VM: cards = cardList<br/>objectWillChange fires
+```
+
+### Error path
+
+When the API returns a non-2xx status, the same sequence diverges at `RequestPerformer.process`:
+
+```mermaid
+sequenceDiagram
+    participant RP as RequestPerformer
+    participant Base as Repository (base)
+    participant Repo as CardsRepository
+    participant VM as ViewModel
+
+    RP->>RP: ClaraNetworkingError(response: httpResponse)<br/>e.g. .unauthorized (401), .internalError (417)
+    RP-->>Base: Result.failure(ClaraNetworkingError)
+    Base->>Base: throws ClaraNetworkingError
+    Base-->>Repo: throws ClaraNetworkingError
+    Repo->>Repo: CardsError(networkingError: error, flow: .fetchCards)
+    Repo-->>VM: throws CardsError
+    VM->>VM: hasError = true
+```
+
+---
+
 ## Defining an Endpoint
 
 Each domain defines its endpoints as a Swift enum conforming to `Router`:
@@ -160,11 +316,10 @@ All requests are authenticated automatically. A `Router` extension injects the b
 
 ---
 
-## Known Improvements
+## Improvements
 
 | Issue | Goal |
 |---|---|
 | `RequestPerformer` has no protocol | Extract `RequestPerforming` to enable mocking in tests |
-| Auth token read from `Session.shared` | Decouple from singleton — inject token provider |
 | No central serialisation | Introduce `NetworkCoder` for consistent encoding and decoding |
 | Callback-based methods still exist | Migrate all remaining `@escaping` completions to `async/await` |
