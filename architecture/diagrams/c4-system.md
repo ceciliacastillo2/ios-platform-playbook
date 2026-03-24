@@ -69,7 +69,7 @@ graph LR
 
 | Category | System | Description |
 |---|---|---|
-| **Backend** | Clara Backend API | Core business logic and data layer. All feature modules reach the backend exclusively through `Core/Networking`. |
+| **Backend** | Clara Backend API | Core business logic and data layer. All feature modules reach the backend exclusively through `ClaraNetworking`. |
 | **Identity** | Auth0 | Authentication provider. Handles login, passwordless flows, token issuance, and refresh. The app never stores credentials — Auth0 owns the full identity lifecycle. |
 | **Notifications** | Customer.io | Manages push notification delivery and tracks device attributes. The backend sends events to Customer.io which triggers pushes to the device via APNs. |
 | **Notifications** | APNs | Apple's push delivery infrastructure. The app receives all push notifications through APNs. Customer.io is the upstream system that sends to APNs. |

@@ -2,121 +2,117 @@
 
 ## Goal
 
-Each module declares exactly what it needs through a protocol. The main app container conforms to those protocols and wires everything together. No module knows about the container — modules are fully decoupled from the app and independently testable.
+Replace all `.shared` singleton access with explicit, protocol-based dependencies. Every class declares what it needs via `@Inject` — visible at the top of the class, enforced by the compiler, swappable in tests.
+
+No DI framework. No multiple init parameters. One place to see all dependencies.
 
 ---
 
 ## Design
 
-### 1. Module defines what it needs — `ExternalDependencies` protocol
+### 1. `DependencyValues` — one struct, everything visible
 
-Each module owns a protocol listing its external dependencies. This is the only contract between the module and the outside world.
+All dependencies are defined in a single struct. This is the only place you need to look to understand what the app depends on.
 
 ```swift
-// Features/Cards/CardsDependencies.swift
+// Core/DI/DependencyValues.swift
 
-protocol CardsExternalDependencies {
-    var session: SessionProviding { get }
-    var featureFlags: FeatureFlagProviding { get }
-    var bugReporter: BugReportLoggable { get }
+struct DependencyValues {
+
+    // Shared — one instance used across all modules
+    var session: SessionProviding = AppSession()
+    var featureFlags: FeatureFlagProviding = LaunchDarklyFlagManager()
+    var bugReporter: BugReportLoggable = LuciqBugReporter()
+
+    // Repositories — one per domain
+    var cardsRepository: CardsRepositoryProtocol = CardsRepository()
+    var transactionsRepository: TransactionsRepositoryProtocol = TransactionsRepository()
+    var reimbursementsRepository: ReimbursementsRepositoryProtocol = AppReimbursementsRepository()
+    var credentialsRepository: CredentialsRepositoryProtocol = CredentialsRepository()
+    var userRepository: UserRepositoryProtocol = UserRepository()
+
+    // Loggers — one per module
+    var cardsLogger: Loggable = ClaraLog(category: "Cards")
+    var transactionsLogger: Loggable = ClaraLog(category: "Transactions")
+    var reimbursementsLogger: Loggable = ClaraLog(category: "Reimbursements")
+    var authLogger: Loggable = ClaraLog(category: "Auth")
 }
 ```
 
-### 2. Module builds its own internal dependencies
+### 2. `Dependencies` — the single global entry point
 
-The module uses the external protocol to construct its internal dependencies. Repositories and loggers are created here — not by the app.
+Set once at app startup. A struct, not a class — fully replaceable in tests.
 
 ```swift
-struct CardsDependencies {
-    var repository: CardsRepositoryProtocol
-    var featureFlags: FeatureFlagProviding
-    var session: SessionProviding
-    var logger: Loggable
+// Core/DI/Dependencies.swift
 
-    init(external: CardsExternalDependencies) {
-        self.repository = CardsRepository()
-        self.featureFlags = external.featureFlags
-        self.session = external.session
-        self.logger = ClaraLog(category: "Cards",
-                               bugReporter: external.bugReporter)
+enum Dependencies {
+    nonisolated(unsafe) static var current = DependencyValues()
+}
+```
+
+### 3. `@Inject` — resolves via KeyPath, fully type-safe
+
+```swift
+// Core/DI/Inject.swift
+
+@propertyWrapper
+struct Inject<T> {
+    private let keyPath: KeyPath<DependencyValues, T>
+
+    var wrappedValue: T {
+        Dependencies.current[keyPath: keyPath]
+    }
+
+    init(_ keyPath: KeyPath<DependencyValues, T>) {
+        self.keyPath = keyPath
     }
 }
 ```
 
-### 3. `AppContainer` owns shared instances and conforms via extensions
-
-`AppContainer` is created once in `AppDelegate`. It conforms to each module's external dependencies protocol through extensions — one extension per module.
-
-```swift
-// Core/DI/AppContainer.swift
-
-final class AppContainer {
-    let session: SessionProviding
-    let featureFlags: FeatureFlagProviding
-    let bugReporter: BugReportLoggable
-
-    init(
-        session: SessionProviding = AppSession(),
-        featureFlags: FeatureFlagProviding = LaunchDarklyFlagManager(),
-        bugReporter: BugReportLoggable = LuciqBugReporter()
-    ) {
-        self.session = session
-        self.featureFlags = featureFlags
-        self.bugReporter = bugReporter
-    }
-}
-
-// One extension per module — conformance via composition
-extension AppContainer: CardsExternalDependencies {}
-extension AppContainer: TransactionsExternalDependencies {}
-extension AppContainer: ReimbursementsExternalDependencies {}
-extension AppContainer: AuthExternalDependencies {}
-```
-
-### 4. Coordinators receive the protocol — not the container
-
-Coordinators are passed the container as the module's protocol type. The module never imports or knows about `AppContainer`.
-
-```swift
-final class CardsCoordinator {
-    private let externalDependencies: CardsExternalDependencies
-
-    init(externalDependencies: CardsExternalDependencies) {
-        self.externalDependencies = externalDependencies
-    }
-
-    func showCardList() {
-        let deps = CardsDependencies(external: externalDependencies)
-        let viewModel = CardsViewModel(dependencies: deps)
-        ...
-    }
-}
-
-// AppCoordinator wires coordinators passing the container as the protocol
-CardsCoordinator(externalDependencies: container)
-```
-
-### 5. ViewModels receive the Dependencies struct
-
-ViewModels never access the container or the external protocol directly. They receive the fully built `Dependencies` struct.
+### 4. Usage — dependencies declared at the top of every class
 
 ```swift
 final class CardsViewModel: ObservableObject {
-    private let dependencies: CardsDependencies
-
-    init(dependencies: CardsDependencies) {
-        self.dependencies = dependencies
-    }
+    @Inject(\.session) private var session
+    @Inject(\.featureFlags) private var featureFlags
+    @Inject(\.cardsRepository) private var repository
+    @Inject(\.cardsLogger) private var logger
 
     func loadCards() async {
-        dependencies.logger.info("Loading cards")
+        logger.info("Loading cards")
         do {
-            let cards = try await dependencies.repository.fetchCards()
-            ...
+            let cards = try await repository.fetchCards()
         } catch {
-            dependencies.logger.error("Failed: \(error)")
+            logger.error("Failed to load cards: \(error)")
         }
     }
+}
+```
+
+---
+
+## App Startup
+
+SDKs must be started before `DependencyValues` is configured. Defaults are lightweight wrappers — never the SDK initialization itself.
+
+```swift
+// AppDelegate.swift
+
+func application(_ application: UIApplication,
+                 didFinishLaunchingWithOptions...) -> Bool {
+
+    // 1. Start SDKs first — expensive work happens here
+    LuciqManager.start()
+    SiftManager.start()
+    CustomerIOManager.start()
+    LokaliseManager.start()
+    RemoteConfigurationManager.start()
+
+    // 2. DependencyValues wraps already-running SDKs — cheap
+    Dependencies.current = DependencyValues()
+
+    return true
 }
 ```
 
@@ -126,46 +122,110 @@ final class CardsViewModel: ObservableObject {
 
 ```
 AppDelegate
-    └── AppContainer (created once)
-            ├── session: SessionProviding         ← shared
-            ├── featureFlags: FeatureFlagProviding ← shared
-            └── bugReporter: BugReportLoggable    ← shared
-                    │
-                    │ passed as protocol type
-                    ▼
-            Coordinator
-                    │
-                    │ builds module dependencies
-                    ▼
-            ModuleDependencies(external:)
-                    │
-                    ▼
-            ViewModel / UseCase
+    └── SDKs started explicitly
+    └── Dependencies.current = DependencyValues()
+                │
+                │ @Inject resolves at property access
+                ▼
+        ViewModel / UseCase
+        @Inject(\.session)
+        @Inject(\.cardsRepository)
+        @Inject(\.cardsLogger)
 ```
 
 ---
 
 ## Testing
 
-Tests never need to build `AppContainer`. A simple mock struct conforming to the module protocol is enough.
+Replace `Dependencies.current` in `setUp()`. Reset in `tearDown()`. Override only what the test needs — everything else uses the default from `DependencyValues`.
 
 ```swift
-// Lightweight mock — only what the module needs
-struct MockCardsExternalDependencies: CardsExternalDependencies {
-    var session: SessionProviding = MockSession()
-    var featureFlags: FeatureFlagProviding = MockFeatureFlagManager()
-    var bugReporter: BugReportLoggable = MockBugReporter()
+final class CardsViewModelTests: XCTestCase {
+
+    override func tearDown() {
+        // Always reset after each test — prevents state leaking between tests
+        Dependencies.current = DependencyValues()
+    }
+
+    // Test happy path — override only the repository
+    func test_loadCards_returnsCards() async {
+        var deps = DependencyValues()
+        deps.cardsRepository = MockCardsRepository(cards: [.stub()])
+        Dependencies.current = deps
+
+        let viewModel = CardsViewModel()
+        await viewModel.loadCards()
+
+        XCTAssertEqual(viewModel.cards.count, 1)
+    }
+
+    // Test error path — repository fails, verify error state
+    func test_loadCards_onFailure_showsError() async {
+        var deps = DependencyValues()
+        deps.cardsRepository = MockCardsRepository(shouldFail: true)
+        Dependencies.current = deps
+
+        let viewModel = CardsViewModel()
+        await viewModel.loadCards()
+
+        XCTAssertTrue(viewModel.hasError)
+    }
+
+    // Test feature flag — verify flag controls behaviour
+    func test_addToWallet_hiddenWhenFlagDisabled() {
+        var deps = DependencyValues()
+        deps.featureFlags = MockFeatureFlagManager(addToWallet: false)
+        Dependencies.current = deps
+
+        let viewModel = CardsViewModel()
+
+        XCTAssertFalse(viewModel.isAddToWalletVisible)
+    }
+
+    // Test logging — verify errors are logged
+    func test_loadCards_onFailure_logsError() async {
+        let mockLogger = MockLogger()
+        var deps = DependencyValues()
+        deps.cardsRepository = MockCardsRepository(shouldFail: true)
+        deps.cardsLogger = mockLogger
+        Dependencies.current = deps
+
+        let viewModel = CardsViewModel()
+        await viewModel.loadCards()
+
+        XCTAssertTrue(mockLogger.errorMessages.contains { $0.contains("Failed to load cards") })
+    }
+}
+```
+
+### Mock examples
+
+```swift
+// MockCardsRepository.swift
+final class MockCardsRepository: CardsRepositoryProtocol {
+    private let cards: [Card]
+    private let shouldFail: Bool
+
+    init(cards: [Card] = [], shouldFail: Bool = false) {
+        self.cards = cards
+        self.shouldFail = shouldFail
+    }
+
+    func fetchCards() async throws -> [Card] {
+        if shouldFail { throw CardsError.networkingUnknown }
+        return cards
+    }
 }
 
-// Override individual dependencies per test
-func test_loadCards_logsErrorOnFailure() async {
-    var deps = CardsDependencies(external: MockCardsExternalDependencies())
-    deps.repository = MockCardsRepository(shouldFail: true)
+// MockFeatureFlagManager.swift
+final class MockFeatureFlagManager: FeatureFlagProviding {
+    var addToWallet: Bool
 
-    let viewModel = CardsViewModel(dependencies: deps)
-    await viewModel.loadCards()
+    init(addToWallet: Bool = false) {
+        self.addToWallet = addToWallet
+    }
 
-    XCTAssertFalse(mockLogger.errorMessages.isEmpty)
+    var isAddToWalletFeatureAvailable: Bool { addToWallet }
 }
 ```
 
@@ -173,26 +233,31 @@ func test_loadCards_logsErrorOnFailure() async {
 
 ## Rules
 
-1. **Every dependency is a protocol** — `Dependencies` structs never hold concrete types
-2. **Modules never import `AppContainer`** — they only know their own `ExternalDependencies` protocol
-3. **`AppContainer` is the only place** concrete types are instantiated
-4. **Shared instances** (session, feature flags, bug reporter) live in `AppContainer` and are passed down
-5. **Module-scoped instances** (repositories, loggers) are created inside `ModuleDependencies.init(external:)`
-6. **No `.shared` access anywhere** — if a class calls `.shared`, it has a hidden dependency
-7. **Coordinators pass the container as the protocol type** — never as `AppContainer`
+1. **Every dependency is a protocol** — `DependencyValues` never holds a concrete type
+2. **No `.shared` access anywhere** — use `@Inject` instead
+3. **`@Inject` is declared at the top of the class** — never resolved mid-method
+4. **Defaults must be lightweight** — no network calls, file I/O, or SDK initialization in default values
+5. **SDKs are started in `AppDelegate`** before `DependencyValues` is configured
+6. **Tests always reset** `Dependencies.current = DependencyValues()` in `tearDown()`
 
 ---
 
-## Adding a New Module
+## Adding a New Dependency
 
-1. Define `ModuleExternalDependencies` protocol in the module
-2. Create `ModuleDependencies` struct with `init(external:)`
-3. Add `extension AppContainer: ModuleExternalDependencies {}` in `Core/DI/`
-4. Create coordinator with `externalDependencies: ModuleExternalDependencies`
-5. Create `MockModuleExternalDependencies` for tests
+1. Add the protocol property to `DependencyValues` with a default value
+2. Use `@Inject(\.newDependency)` in the class that needs it
+3. Add a mock implementation for tests
+
+The compiler enforces that the KeyPath exists — no runtime surprises.
+
+---
+
+## Performance
+
+Creating `DependencyValues` allocates lightweight wrapper objects — microseconds per object. This does not affect app launch time. The expensive work (SDK initialization) happens explicitly in `AppDelegate` before `DependencyValues` is created.
 
 ---
 
 ## Migration
 
-Existing code migrates gradually. New modules follow this pattern from day one. When touching an existing class, replace `.shared` access with an injected dependency. Do not do bulk migrations.
+Never do a bulk migration. Replace `.shared` access when a file is already being touched for another reason. New files must use `@Inject` from day one.
