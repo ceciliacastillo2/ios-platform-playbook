@@ -60,4 +60,4 @@ Package by feature solves all three:
 |---|---|---|
 | Discovery is hard | Scattered across folders | Everything for a feature is co-located |
 | Ownership is unclear | Nobody owns `ViewModels/` | A team or engineer owns `Cards/` |
-| Changes have wide blast radius | Wide — touches all features | Narrow — contained to one module |
+| Changes have wide blast radius | Wide  touches all features | Narrow  contained to one module |

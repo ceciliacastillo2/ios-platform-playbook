@@ -138,9 +138,3 @@ graph TB
   style N fill:#ffe4e6,stroke:#e11d48
   style S fill:#f1f5f9,stroke:#64748b
 ```
-
-**Key rules:**
-- `Core/DI` is the only place dependencies are created never inside a class
-- ViewModels depend on a `RepositoryProtocol`, never on a concrete `Repository` this makes them independently testable
-- Dependencies are provided by the DI container, not created or looked up by the class that needs them
-- `Service` (network client) is registered once in DI and shared across all repositories within the module

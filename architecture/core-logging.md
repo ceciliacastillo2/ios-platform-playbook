@@ -14,6 +14,14 @@ Introduce a protocol-based logging system in `Core/Logging/` that is injectable,
 
 Replacing the bug reporting provider requires changing one file. No feature code changes.
 
+**What success looks like**
+
+- No feature file contains `print()`, `debugPrint()`, or a direct `LCQLog` call.
+- No feature module imports `LuciqSDK` — the SDK is used only in `LuciqBugReporter.swift`.
+- Swapping the bug reporting provider is a one-file change with no feature code touched.
+- A unit test can verify logging behaviour by injecting `MockLogger` — no SDK or console output required.
+- Logs in Console.app are filterable by module category, making it fast to isolate issues during debugging.
+
 ---
 
 ## Structure

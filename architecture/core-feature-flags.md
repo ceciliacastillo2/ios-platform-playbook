@@ -34,6 +34,14 @@ Introduce a `FeatureFlagProviding` protocol in the Core module. The concrete Lau
 
 Flag reads should only happen at the ViewModel or UseCase layer, never in Views or domain Models.
 
+**What success looks like**
+
+- No feature module imports LaunchDarkly directly  the SDK is isolated behind the protocol in Core.
+- `RemoteConfigurationManager.shared` is never called outside of Core. All flag reads go through the injected protocol.
+- A unit test can simulate any flag state by passing a mock `FeatureFlagProviding`  no LaunchDarkly initialization required.
+- Flag access is predictable: ViewModels and UseCases read flags, Views and Models do not.
+- Adding a new flag means one change — a property on the protocol — with the compiler catching every callsite that needs updating.
+
 ---
 
 ## Target Structure

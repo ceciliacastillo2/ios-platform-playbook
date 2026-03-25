@@ -1,43 +1,38 @@
-# Third Party Integrations
-
----
+# Third-Party Integrations
 
 ## Overview
 
-The app integrates with several third party SDKs to handle authentication,
-fraud detection, customer support, feature flags, localization, bug reporting,
-push notifications, and digital card provisioning.
+The app relies on several third-party SDKs for things like authentication, fraud detection, customer support, feature flags, localization, bug reporting, push notifications, and digital card provisioning.
 
-All third party integrations are owned and maintained by the iOS team.
-Feature areas consume the functionality through wrappers defined in `Core/`.
-No feature area should import a third party SDK directly.
+The iOS team owns and maintains all of these integrations. Feature areas consume them through wrappers defined in `Core/` — no feature module should ever import an SDK directly.
+
+The pattern is simple: one file imports the SDK, everything else talks to a protocol.
 
 ---
 
 ## Rules
 
-1. **Every third party SDK must have a single wrapper in `Core/`.** The wrapper is the only file in the codebase that imports the SDK.
+1. **Every SDK lives behind a single wrapper in `Core/`.** That wrapper is the only file in the codebase allowed to import the SDK.
 
-2. **Feature modules depend on the wrapper interface, never on SDK types.** If a SDK is replaced or updated the change is isolated to one file.
+2. **Feature modules depend on the wrapper's protocol, not the SDK's types.** If an SDK is replaced or updated, the change stays in one file.
 
-3. **SDK initialization happens in `App/` at launch.** Feature modules never initialize or configure a SDK directly.
+3. **SDKs are initialized in `App/` at launch.** Feature modules never initialize or configure an SDK themselves.
 
-4. **User identification calls are triggered from `Session` or `AppCoordinator` after authentication.** Feature modules never call identify on a SDK directly.
+4. **User identification is triggered from `Session` or `AppCoordinator` after login.** Feature modules never call identify on an SDK directly.
 
-5. **If a feature needs to log, track, or report something it uses the Core protocol for that concern.** Example: to log an error use `Core/Logging`, not `LCQLog` directly.
+5. **If a feature needs to log, track, or report something, it uses the Core protocol for that concern.** For example: use `Core/Logging` to log an error, not `LCQLog` directly.
 
-6. **When adding a new third party SDK always add it to this document** with its purpose, wrapper location, and the teams that use it.
+6. **When adding a new SDK, add it to this document** with its purpose, wrapper location, and who uses it.
 
 ---
 
-## Current Violations to Address
+## Current Violations
 
-The following SDKs currently leak outside their intended wrapper.
-These should be fixed as part of the migration to the new structure.
+These SDKs are leaking outside their intended wrapper and need to be cleaned up as part of the migration.
 
 | SDK | Violation | Fix |
 |---|---|---|
-| **LuciqSDK** | Imported directly in 6 feature files for logging via `LCQLog.log()` | `Core/Logging` wraps LCQLog. Features use the logging protocol only. |
+| **LuciqSDK** | Imported directly in 6 feature files for logging via `LCQLog.log()` | `Core/Logging` wraps LuciqSDK. Features use the logging protocol only. |
 | **Auth0** | Types leak into `AuthenticationViewModel` and login error types | `Auth0Repository` is the only file that imports Auth0. Clara-defined error and credential types are used everywhere else. |
 | **Zendesk** | Minor import in `AppDelegate` for push token forwarding | Push token forwarding moves into `Core/PushNotifications/`. |
 
@@ -47,24 +42,26 @@ These should be fixed as part of the migration to the new structure.
 
 ### Luciq
 
+Luciq is the in-app bug reporting tool. Users and internal testers can shake the device to file a bug or send feedback without leaving the app. It automatically captures a screenshot, device info, and recent network logs, and links the report to the logged-in user so there's context on the other end.
+
 | | |
 |---|---|
-| **Purpose** | In-app bug reporting and feedback tool. Allows users and internal testers to shake the device to report a bug or send feedback without leaving the app. Captures a screenshot, device information, and recent network logs automatically. Links reports to the logged-in user for context. |
 | **Wrapper** | `Core/Logging/LuciqManager.swift` |
 | **Initialized** | At app launch and on country change |
-| **User identification** | Called after successful login with user ID, name, and email |
-| **Used by** | QA and internal testers during development and beta. Also available to end users in production. |
+| **User identification** | After login — user ID, name, and email |
+| **Used by** | QA, internal testers, and end users in production |
 | **Owner** | iOS team |
 
 ---
 
 ### Thales D1
 
+Thales powers the Add to Wallet feature. It handles the secure communication between the app and the card issuer to provision digital card credentials onto the device — including the cryptographic handshake that makes a digital card trusted by Apple Pay. Clara has a separate issuer ID per country (MX, BR, CO) and per environment (staging, production).
+
 | | |
 |---|---|
-| **Purpose** | Digital card provisioning SDK. Powers the Add to Wallet feature. Handles the secure communication between the app and the card issuer to provision digital card credentials onto the device. Manages the cryptographic process that makes a digital card trusted by Apple Pay. Clara has a separate issuer ID per country (MX, BR, CO) and per environment (staging, production). |
 | **Wrapper** | `Core/Wallet/ThalesManager.swift` |
-| **Initialized** | On demand when the user initiates the Add to Wallet flow |
+| **Initialized** | On demand when the user starts the Add to Wallet flow |
 | **User identification** | Not applicable |
 | **Used by** | Cards team via the Add to Wallet feature |
 | **Owner** | iOS team. Cards team consumes the flow. |
@@ -73,38 +70,41 @@ These should be fixed as part of the migration to the new structure.
 
 ### Sift
 
+Sift runs silently in the background and collects device signals to build a risk score for the current session. It helps Clara detect suspicious activity like account takeover or fraudulent card usage. Feature teams don't interact with it — it just runs.
+
 | | |
 |---|---|
-| **Purpose** | Fraud detection and device intelligence SDK. Runs silently in the background and collects device signals to build a risk score for the current user and session. Helps Clara detect suspicious activity such as account takeover or fraudulent card usage. |
 | **Wrapper** | `Core/Security/SiftManager.swift` |
 | **Initialized** | At app launch |
-| **User identification** | Called after successful login with user ID. Called on logout to clear the user ID. |
-| **Used by** | Owned by the iOS team. No direct usage by feature areas. |
+| **User identification** | After login with user ID. Cleared on logout. |
+| **Used by** | iOS team only. No direct usage by feature areas. |
 | **Owner** | iOS team |
 
 ---
 
 ### Customer.io
 
+Customer.io handles push notification delivery. The backend sends events to Customer.io, which triggers push notifications to the device. It also tracks device attributes automatically. The app's job is to register the push token and let the backend handle the rest.
+
 | | |
 |---|---|
-| **Purpose** | Push notification delivery and customer data platform. Delivers transactional and marketing push notifications to users. Tracks device attributes automatically. The backend sends events to Customer.io which then triggers push notifications to the app. |
 | **Wrapper** | `Core/PushNotifications/CustomerIOManager.swift` |
 | **Initialized** | At app launch |
-| **User identification** | Handled server side. The app registers the push token and device attributes. Customer.io links the device to the user via the backend. |
-| **Used by** | Owned by the iOS team. Push notification content and triggers are defined by the backend and product teams. |
+| **User identification** | Handled server-side. The app registers the push token; Customer.io links the device to the user via the backend. |
+| **Used by** | iOS team owns the integration. Push content and triggers are defined by the backend and product teams. |
 | **Owner** | iOS team |
 
 ---
 
 ### Zendesk
 
+Zendesk powers the in-app support chat. When a user contacts Clara support, they're talking to a support agent through Zendesk. The session is authenticated with a JWT token fetched from the Clara backend so the agent knows which user they're helping. Each country (MX, BR, CO) has its own support channel so queues stay separated by market.
+
 | | |
 |---|---|
-| **Purpose** | In-app customer support chat. Provides the live chat experience when users contact Clara support from within the app. Authenticated via a JWT token fetched from the Clara backend so the support agent knows which Clara user they are talking to. Each country (MX, BR, CO) has its own channel so support queues are separated by market. |
 | **Wrapper** | `Core/Support/ZendeskManager.swift` |
-| **Initialized** | After login, configured with the channel key for the user country |
-| **User identification** | Called after login using a JWT token from the Clara backend. Called on logout to invalidate the session. |
+| **Initialized** | After login, configured with the channel key for the user's country |
+| **User identification** | After login via a JWT token from the Clara backend. Cleared on logout. |
 | **Used by** | Account team surfaces the entry point in the Profile screen. iOS team owns the integration. |
 | **Owner** | iOS team |
 
@@ -112,35 +112,38 @@ These should be fixed as part of the migration to the new structure.
 
 ### LaunchDarkly
 
+LaunchDarkly is the feature flag service. It lets the team turn features on or off without shipping a new app version — per country, per user segment, or for internal employees only. It also controls the minimum supported app version to force users to update when needed.
+
 | | |
 |---|---|
-| **Purpose** | Feature flag and remote configuration service. Allows the team to turn features on or off without releasing a new app version. Controls feature visibility per country, per user segment, or for internal employees only. Also controls the minimum supported app version to force users to update. |
 | **Wrapper** | `Core/FeatureFlags/RemoteConfigurationManager.swift` |
 | **Initialized** | At app launch with an anonymous context |
-| **User identification** | Called after login to associate flags with the authenticated user and their country |
-| **Used by** | All teams consume feature flags through `RemoteConfigurationManager`. No team imports LaunchDarkly directly. |
-| **Owner** | iOS team owns the integration and flag definitions. Each team owns the flags relevant to their domain. |
+| **User identification** | After login to associate flags with the authenticated user and their country |
+| **Used by** | All teams consume flags through `RemoteConfigurationManager`. No team imports LaunchDarkly directly. |
+| **Owner** | iOS team owns the integration and flag definitions. Each team owns the flags for their domain. |
 
 ---
 
 ### Auth0
 
+Auth0 handles login. It validates user credentials, returns a token used to authenticate all subsequent API calls, and manages the token lifecycle including refresh. Passwordless login runs through Auth0 as well. No other team touches it.
+
 | | |
 |---|---|
-| **Purpose** | Authentication and identity platform. Handles the login flow, validates user credentials, and returns a token used to authenticate all subsequent API calls. Supports passwordless login and manages the token lifecycle including refresh. |
 | **Wrapper** | `Modules/Auth/Shared/Auth0Repository.swift` |
 | **Initialized** | Not initialized at launch. Invoked on demand during login. |
 | **User identification** | Not applicable. Auth0 is the identity provider itself. |
-| **Used by** | Auth team exclusively. No other team imports or calls Auth0. |
+| **Used by** | Auth team exclusively. |
 | **Owner** | Auth team |
 
 ---
 
 ### Lokalise
 
+Lokalise handles over-the-air localization. The app checks for updated translations at launch and downloads them in the background, so copy changes and new strings can reach users without going through App Store review. All teams benefit automatically — no one interacts with Lokalise directly.
+
 | | |
 |---|---|
-| **Purpose** | Over-the-air localization and translation management. Allows the team to update in-app text strings without releasing a new app version. The app checks for updated translations at launch and downloads them in the background. Copy changes, error messages, and new translated strings can be shipped to users immediately without App Store review. |
 | **Wrapper** | `Core/Localization/LokaliseManager.swift` |
 | **Initialized** | At app launch. Checks for updates in the background. |
 | **User identification** | Not applicable |

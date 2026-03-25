@@ -25,7 +25,13 @@ There are 9 singletons in the codebase:
 
 All shared services injected via `DependencyContainer`. No feature module accesses `.shared` directly. Session state exposed through a `SessionProviding` protocol injected at coordinator and view model construction time.
 
-**The fix in one sentence:** Dependencies should be explicit, injected, and behind protocols the compiler enforces what each component needs, mocks replace real implementations in tests, and no component has hidden access to global state.
+**What success looks like**
+
+- No `.shared` call exists outside of `Core/DI` — every singleton is registered once and injected everywhere else.
+- Every shared service is behind a protocol. Feature code never references a concrete SDK type.
+- A ViewModel can be unit tested by passing mock protocols — no real session, network, or SDK needed.
+- `Session.shared` is gone from feature modules. ViewModels and Coordinators receive `SessionProviding` at construction time.
+- The migration table below is empty — all singletons have been replaced.
 
 ---
 
