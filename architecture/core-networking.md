@@ -83,10 +83,158 @@ All requests are authenticated automatically. A `Router` extension injects the b
 
 ---
 
-## Improvements
+## Current Status — Endpoint Inventory
 
-| Issue | Goal |
+Grouped by domain. Statuses reflect what is registered in Router files as of March 2026.
+
+### Authentication & Session
+
+| Endpoint | Status |
 |---|---|
-| `RequestPerformer` has no protocol | Extract `RequestPerforming` to enable mocking in tests |
-| No central serialisation | Introduce `NetworkCoder` for consistent encoding and decoding |
-| Callback-based methods still exist | Migrate all remaining `@escaping` completions to `async/await` |
+| `/credentials/auth0/login/mobile` | Active |
+| `/credentials/logout` | Active |
+| `/credentials/refresh` | Active |
+| `/credentials/refreshScopedJWT` | Active |
+| `/credentials/switchCompany/mobile` | Active |
+| `/credentials/addScopes` | Active |
+| `/credentials/encryptionKeys` | Active |
+| `/otp/generateCode` | Active |
+
+### Cards
+
+| Endpoint | Status |
+|---|---|
+| `/mobile/cards/v2` | Active |
+| `/mobile/cards/v2/{cardId}` | Active |
+| `/mobile/cards/{cardUUID}` | Active |
+| `/mobile/cards/activate` | Active |
+| `/mobile/cards/lock` | Active |
+| `/mobile/cards/limits` | Active |
+| `/mobile/cards/sec-code` | Active |
+| `/mobile/cards/pin/{cardUUID}` | Active |
+| `/mobile/cards/{cardId}/nip` | Active |
+| `/mobile/cards/nip/{cardId}` | Active |
+| `/mobile/cards/{cardId}/registration` | Active |
+| `/cards/v2/{cardUUID}` | Active |
+| `/cards/v2/card-balance/{cardId}` | Active |
+| `/cards/v2/getCards-notBalance` | Deprecated — uses `CardListParametersDeprecated` |
+| `/cards/actions` | Deprecated — case `pinDeprecated`, uses `RequestPINParametersDeprecated` |
+| `/cards/request` | Active |
+| `/cards/requestThreshold` | Active |
+| `/card_delivering` | Unknown — not found in any Router file |
+
+### Transactions
+
+| Endpoint | Status |
+|---|---|
+| `/transactions` | Active |
+| `/transactions/{transactionID}` | Active |
+| `/transactions/{transactionID}/comment` | Active |
+| `/transactions/{transactionID}/suggestion/v2` | Active |
+| `/transactions/{transactionId}/fallback-suggestions` | Active |
+| `/transactions/{transactionId}/{invoiceId}/assignCDFI-v2` | Active |
+| `/transactions/approval/v2/request/{transactionID}` | Active |
+| `/mobile/{cardId}/transaction` | Active |
+
+### Documents & OCR
+
+| Endpoint | Status |
+|---|---|
+| `/documents/{documentID}` | Active |
+| `/documents/{documentID}/xmlData` | Active |
+| `/documents/company/downloadUrl` | Active |
+| `/documents/transaction/downloadUrl` | Active |
+| `/documents/transaction/{transactionID}/{documentID}` | Active |
+| `/documents/transaction/{transactionID}/signedUrl/v2` | Active |
+| `/documents/transaction/upload-segment-event/{transactionId}` | Active |
+| `/transactions-docs/{transactionID}` | Active |
+| `/transactions-docs/async/{transactionId}` | Active |
+| `/transactions-docs-ocr/{fileUuid}/extract` | Active |
+| `/transactions-docs-validate` | Active |
+
+### Reimbursements
+
+| Endpoint | Status |
+|---|---|
+| `/reimbursements/` | Active |
+| `/reimbursements/{id}/` | Active |
+| `/reimbursements/attachment` | Active |
+| `/reimbursements/attachment/{id}` | Active |
+| `/reimbursements/bank` | Active |
+| `/reimbursements/merchant` | Active |
+| `/reimbursements/user-bank` | Active |
+| `/reimbursements/v1/user-bank` | Possibly newer version |
+| `/reimbursements-events` | Active (WebSocket) |
+| `/user/queue/reimbursements-events` | Active (WebSocket) |
+
+### Expenses
+
+| Endpoint | Status |
+|---|---|
+| `/expenses` | Active |
+| `/expenses/{id}` | Active |
+| `/expenses/bulk` | Active |
+| `/expenses/search/general` | Active |
+| `/expenses/drafts` | Active |
+| `/expenses/{draftId}/drafts/submit` | Active |
+| `/expenses/{id}/attachments` | Active |
+
+### User & Company
+
+| Endpoint | Status |
+|---|---|
+| `/user` | Active |
+| `/user/{userID}` | Active |
+| `/user/v2` | Active |
+| `/user/v2/changeMobilePhone` | Active |
+| `/user/countryPhoneCodes` | Active |
+| `/user-creation/mobile/updateInfo` | Active |
+| `/company` | Active |
+| `/company/billingInfo` | Active |
+| `/company/companies` | Active |
+
+### Labels
+
+| Endpoint | Status |
+|---|---|
+| `/labels/v1` | Active |
+
+### Collections & Billing
+
+| Endpoint | Status |
+|---|---|
+| `/collections/billing-statements` | Active |
+| `/collections/full-account` | Active |
+| `/collections/validate` | Active |
+| `/insights/billingCycle` | Active |
+
+### Approvals
+
+| Endpoint | Status |
+|---|---|
+| `/approvals-manager/approval-flows/company-settings/{companyId}` | Active |
+
+### Claims
+
+| Endpoint | Status |
+|---|---|
+| `/claims/transaction` | Active |
+| `/claims/reasons` | Active |
+| `/claims/status` | Active |
+
+### External / Integrations
+
+| Endpoint | Status |
+|---|---|
+| `/zendesk-integration-services/zendesk-widgets-sdk/end-user/jwt` | Active |
+| `/referral-jwt` | Active |
+| `/tokenization/accessToken/k08/{consumerId}` | Active |
+| `/kublau` | Active (card tracking) |
+| `/satws/getStatus` | Active |
+| `/documentation/{language}` | Active |
+
+### Open Questions
+
+- **`/card_delivering`** — does not appear in any Router file. May be a dead route, dynamically constructed, or defined outside the standard Router pattern. Run `grep -r "card_delivering" <project-root>` to confirm.
+
+---

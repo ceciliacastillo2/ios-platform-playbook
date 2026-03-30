@@ -42,10 +42,8 @@ rsync -a --delete \
   --include='architecture/***' \
   --include='delivery/***' \
   --include='quality/***' \
-  --include='observability/***' \
   --exclude='*' \
   "$PLAYBOOK_DIR/" "$PLAYBOOK_TARGET/"
-cp "$PLAYBOOK_DIR/README.install.md" "$PLAYBOOK_TARGET/README.md"
 
 # 2. Save playbook source path so /ios_playbook_update can find it
 echo "Saving playbook source path ..."
