@@ -1,0 +1,556 @@
+## Improvements
+
+| Issue | Goal |
+|---|---|
+| The request performer has no protocol | Extract a performing protocol to enable mocking in tests |
+| No central serialisation | Introduce a shared coder for consistent encoding and decoding across all requests |
+| Callback-based methods still exist | Migrate all remaining `@escaping` completions to `async/await` |
+
+---
+
+## Testability Challenges & Plan
+
+Seven structural issues make the networking layer hard to test today. Each entry names the problem, its root cause, and the concrete action needed to fix it.
+
+### 1. The request performer is a concrete class, not a protocol
+
+**Problem:** Tests that need to stub network responses must subclass or wrap the performer, which is fragile and couples tests to implementation details.
+
+**Plan:**
+- Extract a `RequestPerforming` protocol matching the performer's public interface.
+- Make the concrete performer conform to it.
+- Inject the protocol into repositories instead of the concrete type.
+- Provide a mock implementation in the test target that returns pre-configured responses.
+
+---
+
+### 2. The session is a singleton — token injection is order-dependent
+
+**Problem:** The Router extension reads the bearer token from a global singleton. Tests that run in different orders may observe stale or missing tokens, making them non-deterministic.
+
+**Plan:**
+- Introduce a `SessionProviding` protocol with a single `bearerToken: String?` property.
+- Inject it into the performer (or the Router builder) instead of accessing the singleton directly.
+- In tests, inject a controlled implementation with a fixed token value.
+
+---
+
+### 3. Main thread dispatch inside the performer causes test flakiness
+
+**Problem:** Completion handlers dispatched to the main queue require tests to spin the run loop or use `XCTestExpectation` with a timeout — slow and occasionally racy.
+
+**Plan:**
+- Inject a scheduler abstraction so tests can substitute a synchronous one.
+- Alternatively, annotate callback sites with `@MainActor` and keep the performer scheduler-agnostic, pushing the dispatch responsibility to call sites.
+
+---
+
+### 4. Mixed async styles — callbacks and `async/await` coexist
+
+**Problem:** Testing callback-based paths requires `XCTestExpectation`; testing `async/await` paths requires `async` test methods. Both must be maintained in parallel indefinitely.
+
+**Plan:**
+- Audit all `@escaping` completion handlers remaining on the public API surface.
+- Migrate each to `async throws`.
+- Once complete, remove callback wrappers and standardise all networking tests on `async` test methods.
+
+---
+
+### 5. The WebSocket layer has no injectable seam
+
+**Problem:** The stream is backed by a live connection with a complex lifecycle (connect → subscribe → receive → disconnect). There is no way to inject fake events without a real or in-process server.
+
+**Plan:**
+- Extract a `WebSocketPerforming` protocol matching the performer's stream-creation interface.
+- Inject it into the WebSocket repository base class.
+- Provide a mock implementation that yields a controlled sequence of events or errors via a continuation, giving tests full control over the stream lifecycle without any network I/O.
+
+---
+
+### 6. `URLSession` is created internally — interception requires subclassing
+
+**Problem:** The performer and background upload service construct their own `URLSession` instances. Intercepting requests with a custom `URLProtocol` requires subclassing the performer — the same fragile pattern issue 1 aims to eliminate.
+
+**Plan:**
+- Accept a `URLSession` (or a `URLSessionDataTasking` protocol) in the initializers of both the performer and the background service.
+- In production, pass the shared or configured session.
+- In tests, pass a session configured with a custom `URLProtocol`, or a lightweight mock returning pre-canned `(Data, HTTPURLResponse)` tuples.
+
+---
+
+### 7. Business errors from specific HTTP status codes require a correctly-shaped mock body
+
+**Problem:** The error mapper parses a specific JSON structure from certain non-2xx responses. Tests that exercise error-handling paths must produce a correctly-shaped body or the mapping silently falls through to a generic case, hiding bugs.
+
+**Plan:**
+- Centralise the error body shape in a dedicated type and expose a test helper factory method that produces valid fixtures.
+- Add contract tests asserting the decoder produces the expected typed error for each known error payload shape, so any future schema drift is caught immediately.
+
+
+
+
+
+Here's how Clara's networking layer is structured:                                                                      
+                                                                                                                                                                                                        
+  Architecture                                                                                                                                                                                          
+                                                                                                                                                                                                        
+  Custom ClaraNetworking module — no Alamofire/Moya, pure URLSession.                                                                                                                                   
+                                                                                                                                                                                                        
+  Key abstractions                                                                                                                                                                                      
+                                                                                                                                                                                                        
+  Router protocol — defines each endpoint:                                                                                                                                                              
+  - urlPath, httpMethod, headers, body, parameters                                                                                                                                                      
+  - Implemented as enums per domain (e.g., CardsRouter, CredentialsRouter, UserRouter)                                                                                                                  
+                                                                                      
+  RequestPerformer — executes requests, three patterns:                                                                                                                                                 
+  - Callback-based (legacy)                                                                                                                                                                             
+  - async/await returning Result<T, ClaraNetworkingError>                                                                                                                                               
+  - Multipart upload                                                                                                                                                                                    
+                                                                                                                                                                                                        
+  Repository base class — wraps RequestPerformer, injected into use cases/VMs
+                                                                                                                                                                                                        
+  ---             
+  Testing Challenges Specific to Clara                                                                                                                                                                  
+                                                                                                                                                                                                        
+  Given this structure:
+                                                                                                                                                                                                        
+  1. RequestPerformer is a concrete class, not a protocol — to mock it you'd need to subclass or wrap it, which is fragile                                                                              
+  2. Session.shared is a singleton — token injection via Session.shared.bearerToken in the Router extension makes tests order-dependent and hard to isolate
+  3. DispatchQueue.main.async inside the performer — tests need to account for main thread dispatch, easy source of flakiness                                                                           
+  4. Mixed async styles — both callbacks and async/await exist; testing both paths requires different approaches (XCTestExpectation vs async test methods)                                              
+  5. STOMP/WebSocket layer — AsyncThrowingStream is hard to test without a real or fake STOMP server; the stream lifecycle is tricky to control in tests                                                
+  6. URLSession not injected — BackgroundService and RequestPerformer create their own URLSession internally, so you can't swap in URLProtocol mocks without subclassing                                
+  7. Business errors from HTTP 417 — requires returning a correctly-shaped JSON body in mocks, easy to get wrong                                                                                        
+                                                                                                                                                                                                        
+  The biggest structural issue is that RequestPerformer isn't behind a protocol, making it hard to swap for a mock at the repository level. 
+
+
+
+
+EndPoints in the app 
+
+grep -rh 'return "/' ClaraCard/Repositories ClaraCard/Features ClaraCard/Stories --include="*Router.swift" | grep -oE '"[^"]+"' | sort -u 
+
+"/approvals-manager/approval-flows/company-settings/\(companyId)"
+"/card_delivering"
+"/cards/actions"
+"/cards/request"
+"/cards/requestThreshold"
+"/cards/v2/\(cardUUID)"
+"/cards/v2/card-balance/\(cardId)"
+"/cards/v2/getCards-notBalance"
+"/claims/reasons"
+"/claims/status"
+"/claims/transaction"
+"/collections/billing-statements"
+"/collections/full-account"
+"/collections/validate"
+"/company"
+"/company/billingInfo"
+"/company/companies"
+"/credentials/addScopes"
+"/credentials/auth0/login/mobile"
+"/credentials/encryptionKeys"
+"/credentials/logout"
+"/credentials/refresh"
+"/credentials/refreshScopedJWT"
+"/credentials/switchCompany/mobile"
+"/documentation/\(language)"
+"/documents/\(documentID)"
+"/documents/\(documentID)/xmlData"
+"/documents/company/downloadUrl"
+"/documents/transaction/\(transactionID)/\(documentID)"
+"/documents/transaction/\(transactionID)/signedUrl/v2"
+"/documents/transaction/downloadUrl"
+"/documents/transaction/upload-segment-event/\(transactionId)"
+"/expenses"
+"/expenses/\(draftId)/drafts/submit"
+"/expenses/\(id)"
+"/expenses/\(id)/attachments"
+"/expenses/bulk"
+"/expenses/drafts"
+"/expenses/search/general"
+"/insights/billingCycle"
+"/kublau"
+"/labels/v1"
+"/mobile/\(cardId)/transaction"
+"/mobile/cards"
+"/mobile/cards/\(cardId)/nip"
+"/mobile/cards/\(cardId)/registration"
+"/mobile/cards/\(cardUUID)"
+"/mobile/cards/activate"
+"/mobile/cards/limits"
+"/mobile/cards/lock"
+"/mobile/cards/nip/\(cardId)"
+"/mobile/cards/pin/\(cardUUID)"
+"/mobile/cards/sec-code"
+"/mobile/cards/v2"
+"/mobile/cards/v2/\(cardId)"
+"/otp/generateCode"
+"/referral-jwt"
+"/reimbursements-events"
+"/reimbursements/"
+"/reimbursements/\(id)/"
+"/reimbursements/attachment"
+"/reimbursements/attachment/\(id)"
+"/reimbursements/bank"
+"/reimbursements/merchant"
+"/reimbursements/user-bank"
+"/reimbursements/v1/user-bank"
+"/satws/getStatus"
+"/tokenization/accessToken/k08/\(consumerId)"
+"/transactions-docs-ocr/\(parameters.fileUuid)/extract"
+"/transactions-docs-validate"
+"/transactions-docs/\(transactionID)"
+"/transactions-docs/async/\(transactionId)"
+"/transactions"
+"/transactions/\(transactionID)"
+"/transactions/\(transactionId)/\(invoiceId)/assignCDFI-v2"
+"/transactions/\(transactionID)/comment"
+"/transactions/\(transactionId)/fallback-suggestions"
+"/transactions/\(transactionID)/suggestion/v2"
+"/transactions/approval/v2/request/\(transactionID)"
+"/user-creation/mobile/updateInfo"
+"/user"
+"/user/\(userID)"
+"/user/countryPhoneCodes"
+"/user/queue/reimbursements-events"
+"/user/v2"
+"/user/v2/changeMobilePhone"
+"/zendesk-integration-services/zendesk-widgets-sdk/end-user/jwt"
+
+
+
+ Now I have enough to give you a clear picture. Here's the full grouped list with deprecated ones called out:                                                                                                                                    
+   
+  ---                                                                                                                                                                                                                                             
+  Grouped by Domain
+                                                                                                                                                                                                                                                  
+  Authentication & Session
+                                                                                                                                                                                                                                                  
+  ┌───────────────────────────────────┬────────┐                                                                                                                                                                                                  
+  │             Endpoint              │ Status │
+  ├───────────────────────────────────┼────────┤                                                                                                                                                                                                  
+  │ /credentials/auth0/login/mobile   │ Active │
+  ├───────────────────────────────────┼────────┤
+  │ /credentials/logout               │ Active │                                                                                                                                                                                                  
+  ├───────────────────────────────────┼────────┤
+  │ /credentials/refresh              │ Active │                                                                                                                                                                                                  
+  ├───────────────────────────────────┼────────┤
+  │ /credentials/refreshScopedJWT     │ Active │
+  ├───────────────────────────────────┼────────┤                                                                                                                                                                                                  
+  │ /credentials/switchCompany/mobile │ Active │
+  ├───────────────────────────────────┼────────┤                                                                                                                                                                                                  
+  │ /credentials/addScopes            │ Active │
+  ├───────────────────────────────────┼────────┤                                                                                                                                                                                                  
+  │ /credentials/encryptionKeys       │ Active │
+  ├───────────────────────────────────┼────────┤                                                                                                                                                                                                  
+  │ /otp/generateCode                 │ Active │
+  └───────────────────────────────────┴────────┘                                                                                                                                                                                                  
+                  
+  Cards
+
+  ┌──────────────────────────────────────┬─────────────────────────────────┐                                                                                                                                                                      
+  │               Endpoint               │             Status              │
+  ├──────────────────────────────────────┼─────────────────────────────────┤                                                                                                                                                                      
+  │ /mobile/cards/v2                     │ Active                          │
+  ├──────────────────────────────────────┼─────────────────────────────────┤
+  │ /mobile/cards/v2/\(cardId)           │ Active                          │
+  ├──────────────────────────────────────┼─────────────────────────────────┤
+  │ /mobile/cards/\(cardUUID)            │ Active                          │
+  ├──────────────────────────────────────┼─────────────────────────────────┤                                                                                                                                                                      
+  │ /mobile/cards/activate               │ Active                          │
+  ├──────────────────────────────────────┼─────────────────────────────────┤                                                                                                                                                                      
+  │ /mobile/cards/lock                   │ Active                          │
+  ├──────────────────────────────────────┼─────────────────────────────────┤
+  │ /mobile/cards/limits                 │ Active                          │
+  ├──────────────────────────────────────┼─────────────────────────────────┤
+  │ /mobile/cards/sec-code               │ Active                          │
+  ├──────────────────────────────────────┼─────────────────────────────────┤                                                                                                                                                                      
+  │ /mobile/cards/pin/\(cardUUID)        │ Active                          │
+  ├──────────────────────────────────────┼─────────────────────────────────┤                                                                                                                                                                      
+  │ /mobile/cards/\(cardId)/nip          │ Active                          │
+  ├──────────────────────────────────────┼─────────────────────────────────┤                                                                                                                                                                      
+  │ /mobile/cards/nip/\(cardId)          │ Active                          │
+  ├──────────────────────────────────────┼─────────────────────────────────┤                                                                                                                                                                      
+  │ /mobile/cards/\(cardId)/registration │ Active                          │
+  ├──────────────────────────────────────┼─────────────────────────────────┤
+  │ /cards/v2/\(cardUUID)                │ Active                          │
+  ├──────────────────────────────────────┼─────────────────────────────────┤
+  │ /cards/v2/card-balance/\(cardId)     │ Active                          │
+  ├──────────────────────────────────────┼─────────────────────────────────┤
+  │ /cards/v2/getCards-notBalance        │ Deprecated (cardList case)      │
+  ├──────────────────────────────────────┼─────────────────────────────────┤
+  │ /cards/actions                       │ Deprecated (pinDeprecated case) │
+  ├──────────────────────────────────────┼─────────────────────────────────┤                                                                                                                                                                      
+  │ /cards/request                       │ Active                          │
+  ├──────────────────────────────────────┼─────────────────────────────────┤                                                                                                                                                                      
+  │ /cards/requestThreshold              │ Active                          │
+  ├──────────────────────────────────────┼─────────────────────────────────┤
+  │ /card_delivering                     │ Unknown — not found in Routers  │
+  └──────────────────────────────────────┴─────────────────────────────────┘                                                                                                                                                                      
+   
+  Transactions                                                                                                                                                                                                                                    
+                  
+  ┌───────────────────────────────────────────────────────────┬────────┐
+  │                         Endpoint                          │ Status │
+  ├───────────────────────────────────────────────────────────┼────────┤
+  │ /transactions                                             │ Active │
+  ├───────────────────────────────────────────────────────────┼────────┤
+  │ /transactions/\(transactionID)                            │ Active │
+  ├───────────────────────────────────────────────────────────┼────────┤
+  │ /transactions/\(transactionID)/comment                    │ Active │
+  ├───────────────────────────────────────────────────────────┼────────┤                                                                                                                                                                          
+  │ /transactions/\(transactionID)/suggestion/v2              │ Active │
+  ├───────────────────────────────────────────────────────────┼────────┤                                                                                                                                                                          
+  │ /transactions/\(transactionId)/fallback-suggestions       │ Active │
+  ├───────────────────────────────────────────────────────────┼────────┤                                                                                                                                                                          
+  │ /transactions/\(transactionId)/\(invoiceId)/assignCDFI-v2 │ Active │
+  ├───────────────────────────────────────────────────────────┼────────┤                                                                                                                                                                          
+  │ /transactions/approval/v2/request/\(transactionID)        │ Active │
+  ├───────────────────────────────────────────────────────────┼────────┤                                                                                                                                                                          
+  │ /mobile/\(cardId)/transaction                             │ Active │
+  └───────────────────────────────────────────────────────────┴────────┘                                                                                                                                                                          
+   
+  Documents & OCR                                                                                                                                                                                                                                 
+                  
+  ┌──────────────────────────────────────────────────────────────┬────────┐                                                                                                                                                                       
+  │                           Endpoint                           │ Status │
+  ├──────────────────────────────────────────────────────────────┼────────┤
+  │ /documents/\(documentID)                                     │ Active │
+  ├──────────────────────────────────────────────────────────────┼────────┤
+  │ /documents/\(documentID)/xmlData                             │ Active │
+  ├──────────────────────────────────────────────────────────────┼────────┤                                                                                                                                                                       
+  │ /documents/company/downloadUrl                               │ Active │
+  ├──────────────────────────────────────────────────────────────┼────────┤                                                                                                                                                                       
+  │ /documents/transaction/downloadUrl                           │ Active │
+  ├──────────────────────────────────────────────────────────────┼────────┤
+  │ /documents/transaction/\(transactionID)/\(documentID)        │ Active │
+  ├──────────────────────────────────────────────────────────────┼────────┤                                                                                                                                                                       
+  │ /documents/transaction/\(transactionID)/signedUrl/v2         │ Active │
+  ├──────────────────────────────────────────────────────────────┼────────┤                                                                                                                                                                       
+  │ /documents/transaction/upload-segment-event/\(transactionId) │ Active │
+  ├──────────────────────────────────────────────────────────────┼────────┤                                                                                                                                                                       
+  │ /transactions-docs/\(transactionID)                          │ Active │
+  ├──────────────────────────────────────────────────────────────┼────────┤                                                                                                                                                                       
+  │ /transactions-docs/async/\(transactionId)                    │ Active │
+  ├──────────────────────────────────────────────────────────────┼────────┤                                                                                                                                                                       
+  │ /transactions-docs-ocr/\(fileUuid)/extract                   │ Active │
+  ├──────────────────────────────────────────────────────────────┼────────┤                                                                                                                                                                       
+  │ /transactions-docs-validate                                  │ Active │
+  └──────────────────────────────────────────────────────────────┴────────┘                                                                                                                                                                       
+                  
+  Reimbursements
+
+  ┌───────────────────────────────────┬────────────────────────┐
+  │             Endpoint              │         Status         │
+  ├───────────────────────────────────┼────────────────────────┤                                                                                                                                                                                  
+  │ /reimbursements/                  │ Active                 │
+  ├───────────────────────────────────┼────────────────────────┤                                                                                                                                                                                  
+  │ /reimbursements/\(id)/            │ Active                 │
+  ├───────────────────────────────────┼────────────────────────┤
+  │ /reimbursements/attachment        │ Active                 │
+  ├───────────────────────────────────┼────────────────────────┤                                                                                                                                                                                  
+  │ /reimbursements/attachment/\(id)  │ Active                 │
+  ├───────────────────────────────────┼────────────────────────┤                                                                                                                                                                                  
+  │ /reimbursements/bank              │ Active                 │
+  ├───────────────────────────────────┼────────────────────────┤                                                                                                                                                                                  
+  │ /reimbursements/merchant          │ Active                 │
+  ├───────────────────────────────────┼────────────────────────┤                                                                                                                                                                                  
+  │ /reimbursements/user-bank         │ Active                 │
+  ├───────────────────────────────────┼────────────────────────┤
+  │ /reimbursements/v1/user-bank      │ Possibly newer version │
+  ├───────────────────────────────────┼────────────────────────┤                                                                                                                                                                                  
+  │ /reimbursements-events            │ Active (WebSocket)     │
+  ├───────────────────────────────────┼────────────────────────┤                                                                                                                                                                                  
+  │ /user/queue/reimbursements-events │ Active (WebSocket)     │
+  └───────────────────────────────────┴────────────────────────┘                                                                                                                                                                                  
+                  
+  Expenses                                                                                                                                                                                                                                        
+                  
+  ┌────────────────────────────────────┬────────┐
+  │              Endpoint              │ Status │
+  ├────────────────────────────────────┼────────┤
+  │ /expenses                          │ Active │
+  ├────────────────────────────────────┼────────┤
+  │ /expenses/\(id)                    │ Active │
+  ├────────────────────────────────────┼────────┤
+  │ /expenses/bulk                     │ Active │
+  ├────────────────────────────────────┼────────┤                                                                                                                                                                                                 
+  │ /expenses/search/general           │ Active │
+  ├────────────────────────────────────┼────────┤                                                                                                                                                                                                 
+  │ /expenses/drafts                   │ Active │
+  ├────────────────────────────────────┼────────┤                                                                                                                                                                                                 
+  │ /expenses/\(draftId)/drafts/submit │ Active │
+  ├────────────────────────────────────┼────────┤                                                                                                                                                                                                 
+  │ /expenses/\(id)/attachments        │ Active │
+  └────────────────────────────────────┴────────┘                                                                                                                                                                                                 
+   
+  User & Company                                                                                                                                                                                                                                  
+                  
+  ┌──────────────────────────────────┬────────┐
+  │             Endpoint             │ Status │
+  ├──────────────────────────────────┼────────┤
+  │ /user                            │ Active │
+  ├──────────────────────────────────┼────────┤
+  │ /user/\(userID)                  │ Active │                                                                                                                                                                                                   
+  ├──────────────────────────────────┼────────┤
+  │ /user/v2                         │ Active │                                                                                                                                                                                                   
+  ├──────────────────────────────────┼────────┤
+  │ /user/v2/changeMobilePhone       │ Active │
+  ├──────────────────────────────────┼────────┤                                                                                                                                                                                                   
+  │ /user/countryPhoneCodes          │ Active │
+  ├──────────────────────────────────┼────────┤                                                                                                                                                                                                   
+  │ /user-creation/mobile/updateInfo │ Active │
+  ├──────────────────────────────────┼────────┤                                                                                                                                                                                                   
+  │ /company                         │ Active │
+  ├──────────────────────────────────┼────────┤                                                                                                                                                                                                   
+  │ /company/billingInfo             │ Active │
+  ├──────────────────────────────────┼────────┤
+  │ /company/companies               │ Active │
+  └──────────────────────────────────┴────────┘                                                                                                                                                                                                   
+   
+  Labels                                                                                                                                                                                                                                          
+                  
+  ┌────────────┬────────┐
+  │  Endpoint  │ Status │
+  ├────────────┼────────┤
+  │ /labels/v1 │ Active │
+  └────────────┴────────┘
+
+  Collections & Billing                                                                                                                                                                                                                           
+   
+  ┌─────────────────────────────────┬────────┐                                                                                                                                                                                                    
+  │            Endpoint             │ Status │
+  ├─────────────────────────────────┼────────┤
+  │ /collections/billing-statements │ Active │
+  ├─────────────────────────────────┼────────┤
+  │ /collections/full-account       │ Active │
+  ├─────────────────────────────────┼────────┤                                                                                                                                                                                                    
+  │ /collections/validate           │ Active │
+  ├─────────────────────────────────┼────────┤                                                                                                                                                                                                    
+  │ /insights/billingCycle          │ Active │
+  └─────────────────────────────────┴────────┘                                                                                                                                                                                                    
+   
+  Approvals                                                                                                                                                                                                                                       
+                  
+  ┌─────────────────────────────────────────────────────────────────┬────────┐
+  │                            Endpoint                             │ Status │
+  ├─────────────────────────────────────────────────────────────────┼────────┤
+  │ /approvals-manager/approval-flows/company-settings/\(companyId) │ Active │
+  └─────────────────────────────────────────────────────────────────┴────────┘
+                                                                                                                                                                                                                                                  
+  Claims
+                                                                                                                                                                                                                                                  
+  ┌─────────────────────┬────────┐
+  │      Endpoint       │ Status │
+  ├─────────────────────┼────────┤
+  │ /claims/transaction │ Active │
+  ├─────────────────────┼────────┤
+  │ /claims/reasons     │ Active │
+  ├─────────────────────┼────────┤                                                                                                                                                                                                                
+  │ /claims/status      │ Active │
+  └─────────────────────┴────────┘                                                                                                                                                                                                                
+                  
+  External / Integrations
+
+  ┌────────────────────────────────────────────────────────────────┬────────────────────────┐
+  │                            Endpoint                            │         Status         │
+  ├────────────────────────────────────────────────────────────────┼────────────────────────┤
+  │ /zendesk-integration-services/zendesk-widgets-sdk/end-user/jwt │ Active                 │
+  ├────────────────────────────────────────────────────────────────┼────────────────────────┤
+  │ /referral-jwt                                                  │ Active                 │                                                                                                                                                     
+  ├────────────────────────────────────────────────────────────────┼────────────────────────┤                                                                                                                                                     
+  │ /tokenization/accessToken/k08/\(consumerId)                    │ Active                 │                                                                                                                                                     
+  ├────────────────────────────────────────────────────────────────┼────────────────────────┤                                                                                                                                                     
+  │ /kublau                                                        │ Active (card tracking) │
+  ├────────────────────────────────────────────────────────────────┼────────────────────────┤                                                                                                                                                     
+  │ /satws/getStatus                                               │ Active                 │
+  ├────────────────────────────────────────────────────────────────┼────────────────────────┤                                                                                                                                                     
+  │ /documentation/\(language)                                     │ Active                 │
+  └────────────────────────────────────────────────────────────────┴────────────────────────┘                                                                                                                                                     
+                  
+  ---                                                                                                                                                                                                                                             
+  Confirmed Deprecated
+                      
+  - /cards/v2/getCards-notBalance — marked // MARK: - Old endpoints, uses CardListParametersDeprecated
+  - /cards/actions — case named pinDeprecated, uses RequestPINParametersDeprecated                                                                                                                                                                
+                                                                                                                                                                                                                                                  
+  /card_delivering doesn't appear in any Router file — it may be a dead route or defined somewhere else. Worth a search:  
+
+
+
+   External integrations have no abstraction boundary. /kublau, /satws/getStatus, /tokenization/accessToken/k08/{consumerId} — vendor names and internal identifiers are leaking directly into Router cases. If any of these vendors change, the   
+  change ripples through feature code.
+
+
+
+  Concrete suggestions
+                                                                                                                                                                                                                                                  
+  1. Declare the Cards migration done — pick one prefix and delete the other.
+  The /mobile/cards/ vs /cards/ split is the single biggest source of confusion in the inventory. Pick the canonical path, route all new work through it, and create a time-boxed initiative to migrate the remaining callsites. Also delete the  
+  two confirmed deprecated endpoints now — they have no upside.                                                                                                                                                                                   
+                                                                                                                                                                                                                                                  
+  2. Investigate the NIP duplication and /card_delivering before the next Cards sprint.                                                                                                                                                           
+  /mobile/cards/{cardId}/nip and /mobile/cards/nip/{cardId} cannot both be correct. One is a bug or a dead path. Find out which before either gets a new consumer. Same for /card_delivering — confirm it's dead and remove it, or document why it
+   exists outside the Router pattern.                                                                                                                                                                                                             
+                  
+  3. Write and enforce a versioning policy.                                                                                                                                                                                                       
+  Decide: new versions get a path segment (/v2), no suffixes, no mixed schemes. Document it in this playbook. Add a lint rule or PR checklist item. The existing inconsistency is grandfathered; new endpoints follow the policy.
+                                                                                                                                                                                                                                                  
+  4. Hide the Documents backend split behind a single repository.                                                                                                                                                                                 
+  Feature code should call DocumentRepository methods — it should not know whether the response comes from /documents/ or /transactions-docs/. Consolidate the routing decision inside the repository. This is a low-risk refactor that pays off  
+  every time the backend reorganises.                                                                                                                                                                                                             
+                  
+  5. Evaluate WebSocket coverage for Approvals and Transactions.                                                                                                                                                                                  
+  If approval status and transaction state changes are currently polled, profile the polling interval and user-facing latency. If either is a problem, extending the existing STOMP infrastructure to cover those domains is lower cost than
+  building new real-time infrastructure from scratch — the pattern already exists in Reimbursements.                                                                                                                                              
+   
+  6. Wrap external integrations in dedicated adapters.                                                                                                                                                                                            
+  ZendeskAdapter, SatwsAdapter, TokenizationAdapter — each owns its Router cases internally and exposes a domain-language interface. Feature code calls zendeskAdapter.widgetJWT(), not a raw Router case with a vendor URL. Vendor changes become
+   a one-file problem.                                                                                                                                                                                                                            
+   
+  7. Consider co-locating Router enums with their feature modules.                                                                                                                                                                                
+  With 12 domains and 70+ endpoints, a centralized Router monolith is hard to navigate and creates merge contention. Each domain module owns its Router enum. ClaraNetworking provides the protocol and the performer; domains own their
+  definitions. This aligns with the package-by-feature principle already in the playbook. 
+
+
+Proposed Split
+                
+  Team 1 — Spending & Cards
+                                                                                                                                                                                                        
+  Owns the core cardholder experience: getting a card, using it, seeing what was spent.                                                                                                                 
+                                                                                                                                                                                                        
+  ┌─────────────────┬──────────────────────────────────────┬──────────────────────────────────────────────────┐                                                                                         
+  │     Domain      │            Key endpoints             │                     Features                     │
+  ├─────────────────┼──────────────────────────────────────┼──────────────────────────────────────────────────┤                                                                                         
+  │ Cards           │ /mobile/cards/**                     │ Card list, PIN, limits, activation, wallet       │
+  ├─────────────────┼──────────────────────────────────────┼──────────────────────────────────────────────────┤
+  │ Transactions    │ /transactions/**                     │ Transaction list, detail, comments, approvals    │                                                                                         
+  ├─────────────────┼──────────────────────────────────────┼──────────────────────────────────────────────────┤                                                                                         
+  │ Documents & OCR │ /transactions-docs/**, /documents/** │ Evidence upload, OCR extraction, invoice linking │                                                                                         
+  ├─────────────────┼──────────────────────────────────────┼──────────────────────────────────────────────────┤                                                                                         
+  │ Claims          │ /claims/**                           │ Suspicious transaction reporting                 │
+  ├─────────────────┼──────────────────────────────────────┼──────────────────────────────────────────────────┤                                                                                         
+  │ Labels          │ /labels/v1                           │ Transaction tagging                              │
+  └─────────────────┴──────────────────────────────────────┴──────────────────────────────────────────────────┘                                                                                         
+                  
+  Team 2 — Finance & Operations                                                                                                                                                                         
+                  
+  Owns everything that happens after spending: reconciliation, reimbursements, company management.                                                                                                      
+  
+  ┌───────────────────────┬────────────────────────────────────────┬───────────────────────────────────────┐                                                                                            
+  │        Domain         │             Key endpoints              │               Features                │
+  ├───────────────────────┼────────────────────────────────────────┼───────────────────────────────────────┤
+  │ Reimbursements        │ /reimbursements/**                     │ Out-of-pocket expenses, bank accounts │
+  ├───────────────────────┼────────────────────────────────────────┼───────────────────────────────────────┤
+  │ Expenses              │ /expenses/**                           │ Draft expenses, bulk operations       │                                                                                            
+  ├───────────────────────┼────────────────────────────────────────┼───────────────────────────────────────┤                                                                                            
+  │ Collections & Billing │ /collections/**, /insights/**          │ Billing statements, account balance   │                                                                                            
+  ├───────────────────────┼────────────────────────────────────────┼───────────────────────────────────────┤                                                                                            
+  │ Company & User        │ /company/**, /user/**, /credentials/** │ Profile, auth, company switching      │
+  ├───────────────────────┼────────────────────────────────────────┼───────────────────────────────────────┤                                                                                            
+  │ Domiciliation         │ /collections/full-account              │ MX-specific bank account setup        │
+  └───────────────────────┴────────────────────────────────────────┴───────────────────────────────────────┘  
+
+

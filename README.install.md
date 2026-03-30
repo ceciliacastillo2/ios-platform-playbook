@@ -4,8 +4,6 @@ A living reference for the iOS team covering architecture, quality, observabilit
 
 ## Claude Commands
 
-AI-assisted commands for navigating this playbook inside Claude Code.
-
 | Command | Description |
 |---|---|
 | `/ios_playbook_guide [topic]` | Explains architecture decisions and team standards for a given topic |
@@ -20,36 +18,16 @@ AI-assisted commands for navigating this playbook inside Claude Code.
 - `delivery ci` — CI roadmap and phases
 - `navigation` — coordinator pattern
 
-**Install globally** (works in every repo on your machine):
-```bash
-./install-commands.sh
-```
-
-**Install into a specific repo:**
-```bash
-./install-commands.sh /path/to/your/repo
-```
-
 ---
 
 ## Structure
 
-| Folder | Purpose |
-|---|---|
-| `architecture/` | System design, diagrams, ADRs, and guiding principles |
-| `operating-model/` | How the team works rituals, playbooks, and release process |
-| `focus-areas/` | Deep dives by discipline |
-| `templates/` | Reusable templates for ADRs, runbooks, and more |
-
-### Focus Areas
-
 | Area | Covers |
 |---|---|
-| `architecture/` | System design decisions and patterns |
-| `quality/` | Testing strategy, static analysis, code health |
-| `observability/` | Logs, metrics, traces, crash monitoring, dashboards |
-| `delivery/` | CI/CD pipelines and release trains |
-| `ai-integration/` | AI experimentation and integration ideas |
+| `playbook/architecture/` | System design decisions and patterns |
+| `playbook/quality/` | Testing strategy, static analysis, code health |
+| `playbook/observability/` | Logs, metrics, traces, crash monitoring, dashboards |
+| `playbook/delivery/` | CI/CD pipelines and release trains |
 
 ---
 
@@ -61,7 +39,7 @@ AI-assisted commands for navigating this playbook inside Claude Code.
 |:---:|---|---|---|
 | 1 | **System Design** | Color tokens & typography · Dark mode support · Component library | |
 | 2 | **Testing** | Unit testing strategy · UI / integration testing · Snapshot testing · Mock / stub infrastructure | Unlocks Navigation work |
-| 3 | **CI/CD & Release Management** | Build pipelines · Code signing & provisioning · Phased rollout strategy | See `delivery/ci.md` for roadmap |
+| 3 | **CI/CD & Release Management** | Build pipelines · Code signing & provisioning · Phased rollout strategy | See `playbook/delivery/ci.md` for roadmap |
 | 4 | **DI** | DI framework setup · Module organization · Scoped dependencies | |
 | 5 | **Navigation** | Deep linking · Back stack · URL schemes · Universal links | Depends on Testing infrastructure |
 
