@@ -3,6 +3,8 @@
 Every feature module owns its full vertical slice: screens, view models, models, repositories, and coordinator.
 No module reaches into another module's internals.
 
+> **Reference implementations:** `Tasks` (smallest complete module) and `ClaraConta` / Digital Account (largest, with sub-screens, a shared `Store`, and deep links). See [../reference-implementations.md](../reference-implementations.md).
+
 ---
 
 ## Modules
@@ -14,6 +16,7 @@ No module reaches into another module's internals.
 | `Transactions` | TransactionList · TransactionDetail · Filters · Labels · InvoiceSuggestions · ReportTransaction · SuspiciousTransaction | `TransactionsCoordinator` |
 | `Reimbursements` | ExpenseList · ExpenseDetail · ExpenseForm · BankAccount · Attachments | `ReimbursementsCoordinator` |
 | `Account` | Profile · Security · Collections · Referrals · CompanySwitch | `AccountCoordinator` |
+| `ClaraConta` | Home · Deposit · Pay · PayAmount · PaymentReview · SearchTransactions · TransactionDetail | `DigitalAccountCoordinator` |
 | `Tasks` | TaskList · TaskDetail | `TasksCoordinator` |
 
 ---
@@ -33,7 +36,7 @@ graph TB
   end
 
   subgraph MODULES["Modules/  —  feature modules"]
-    MOD_D["Cards · Tasks · Identity · Onboarding\nTransactions · Reimbursements · Account"]
+    MOD_D["Cards · Tasks · Identity · Onboarding\nTransactions · Reimbursements · Account · ClaraConta"]
   end
 
   APP --> CORE

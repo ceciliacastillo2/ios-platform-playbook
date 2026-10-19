@@ -1,12 +1,110 @@
 # Continuous Integration
 
+---
+
+## Why This Project
+
+Release automation is the right first investment for a four-person team that wants to grow — not because it is the most technically complex problem, but because it is the one that pays off immediately, visibly, and without requiring the rest of the codebase to change first.
+
+### The Problem Today
+
+Releasing the app is a manual, high-stakes event. It requires a specific engineer to be available, to follow a sequence of steps from memory, and to catch any mistakes before they reach users or the App Store. Every release carries the same risk and requires the same effort regardless of how small the change is.
+
+For a team of four, this means:
+- Releases are tied to individuals — if that person is unavailable, the release waits
+- The process is not written down in a way that anyone can follow without guidance
+- There is no automated check that the build is healthy before it goes out
+- Adding a new test device or rotating a certificate requires manual coordination
+
+### The Goal
+
+Make releasing the app a non-event. Any team member should be able to trigger a build and ship to TestFlight with a single command — with confidence that the output is correct, consistent, and does not depend on their local environment.
+
+### Impact
+
+| Before | After |
+|---|---|
+| Releases depend on one person | Any team member can ship |
+| Manual steps from memory | Scripted, version-controlled lanes |
+| No visibility into what was built or when | Full build history and logs |
+| Adding a test device requires manual profile work | Handled automatically |
+| New engineer needs weeks to understand the release | Documented, runnable from day one |
+
+### What It Unlocks
+
+Release automation is not just about saving time on releases. It is the foundation everything else depends on:
+
+- **Unit tests become useful** — a test suite only protects you if it runs automatically on every change. Without CI, tests are optional. With CI, a failing test blocks a broken build from shipping.
+- **Snapshot tests become enforceable** — visual regressions are caught in the pipeline, not spotted by a user after the release.
+- **Code review gets faster** — reviewers stop worrying about "does this build?" and focus on what the code actually does.
+- **Growth becomes safer** — when the team doubles, the release process does not double in complexity. It stays a button.
+- **Confidence compounds** — every engineer knows that if their change passes the pipeline, it is safe to ship. That confidence is what lets a small team move fast without breaking things.
+
+### Why Now
+
+This is the lowest-risk, highest-visibility improvement available. It does not require changing the architecture, adopting new patterns, or touching feature code. It builds on what the team already does — it just removes the manual steps and makes it repeatable.
+
+With four engineers, the cost of building this is low. With eight engineers across two time zones, the cost of not having it becomes a daily tax on every release.
+
+---
+
 ## Current Status
 
-**Manual.** The team currently owns the full build, test, and release process hands-on. This gives us direct control and deep familiarity with every step — and it's the right starting point from which to build a thoughtful, well-understood automation strategy.
+**Partially automated — local-first.** Build, test, lint, and signing are scripted as Fastlane lanes, and a handful of GitHub Actions run around the edges of the process. What is still missing is a pipeline that builds and tests every pull request; today those checks run on a developer's machine.
+
+**In place today**
+
+| Area | What exists |
+|---|---|
+| Build & test | Fastlane lanes — `build` (simulator), `test` (unit tests → HTML + JUnit reports), `lint` (`swiftformat --lint` + `swiftlint lint --strict`) |
+| Distribution | Fastlane lanes — `archive`, `production_build`, `build_adhoc`, `upload_testflight`, `upload_browserstack` |
+| Code signing | `match` (read-only inside lanes); `match_bootstrap` rotates certs manually |
+| Static analysis | SonarCloud automatic analysis (`sonar-project.properties`) + SwiftLint and Periphery baselines |
+| Release bookkeeping | `on-merge-to-main` Action reads `MARKETING_VERSION`, creates the git tag and the GitHub release |
+
+**Not yet in place**
+
+- No CI job builds or tests a pull request — a red build or a failing test is not automatically blocked.
+- Signing and device provisioning still run from a developer's machine (`match_bootstrap` is manual by design).
+- No cloud runner yet; the target platform is **Bitrise** (see Target Architecture below).
 
 ## Goal
 
 Progressively automate the build and release process from local developer workflows through fully managed cloud CI so that shipping a build is repeatable, auditable, and fast, and the team can focus more energy on building great features.
+
+---
+
+## Target Architecture
+
+**Bitrise** orchestrates the pipeline. It is triggered by Slack, a pull request, or a GitHub event, then selects one of three release paths. Every path runs the same test → lint → build → sign sequence; only the environment and the final destination differ.
+
+```mermaid
+flowchart TB
+    T["Trigger<br/>Slack · Pull request · GitHub"] --> B["Bitrise<br/>Select release path"]
+
+    B --> P1["Stage → BrowserStack"]
+    B --> P2["Stage → TestFlight"]
+    B --> P3["Production"]
+
+    P1 --> D1["Ad-Hoc IPA<br/>BrowserStack"]
+    P2 --> D2["App Store IPA<br/>TestFlight"]
+    P3 --> D3["Production IPA<br/>App Store Connect → TestFlight → App Store"]
+
+    MATCH[("Private match repository<br/>Ad-Hoc certificates · App Store certificates<br/>Provisioning profiles")]
+    MATCH -. "signs every build" .-> P1
+    MATCH -. "signs every build" .-> P2
+    MATCH -. "signs every build" .-> P3
+```
+
+**The three release paths**
+
+| Path | Purpose | Lane sequence | Ends at |
+|---|---|---|---|
+| Stage → BrowserStack | Manual QA on real devices | `test` → `lint` → `build_adhoc` → `run_signed_build` → `match: adhoc` → `gym: ad-hoc` | Ad-Hoc IPA → BrowserStack |
+| Stage → TestFlight | Internal distribution | `test` → `lint` → Stage App Store build → `match: appstore` → `gym: app-store` | App Store IPA → App Store Connect → TestFlight |
+| Production | Public release | `test` → `lint` → `production_build` → `run_signed_build` → `match: appstore` → `gym: app-store` | Production IPA → App Store Connect → TestFlight → App Store |
+
+**Code signing** — all three paths sign from the same private `match` repository, which holds the Ad-Hoc and App Store certificates and the provisioning profiles. No developer machine holds signing material, and adding a test device no longer requires manual profile management.
 
 ---
 
@@ -62,7 +160,7 @@ Both paths produce the same outcome. The command is for routine releases; the co
 **What:** Move the automated pipeline off developer machines and into a cloud CI platform, triggered automatically and producing an auditable log for every run.
 
 **Goal:**
-Run builds and releases on dedicated cloud infrastructure so the process is no longer tied to any individual's machine. The specific platform has not been selected — options including Bitrise, GitHub Actions, and other tools need to be evaluated against the team's build volume, cost, and code signing requirements before a decision is made.
+Run builds and releases on dedicated cloud infrastructure so the process is no longer tied to any individual's machine. The platform is **Bitrise**, which orchestrates the three release paths described in [Target Architecture](#target-architecture).
 
 **Code Signing**
 Code signing is an open problem and is in scope for this phase. Today, adding a new test device is a manual process — someone has to update the provisioning profile, download it, and redistribute it to the team. This is error-prone as the team grows. A cloud CI solution must address how signing is managed, how test devices are added without manual intervention, and how certificates are stored and rotated securely. This evaluation is part of the platform selection decision.

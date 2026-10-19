@@ -110,3 +110,4 @@ Each module owns its category string. This makes logs filterable by domain in Co
 | `Profile` | `"Profile"` |
 | `Collections` | `"Collections"` |
 | `Tasks` | `"Tasks"` |
+| `ClaraConta` | `"ClaraConta"` |

@@ -173,6 +173,21 @@ ClaraCard/
 │   │           ├── AccountCoordinator.swift
 │   │           └── AccountRoute.swift
 │   │
+│   ├── ClaraConta/             ← Digital Account (BR) — PIX deposit, transfer, pay
+│   │   ├── Home/               ← screen (Presentation / Model / Data / Networking)
+│   │   ├── Deposit/            ← screen
+│   │   ├── Pay/                ← screen
+│   │   ├── PayAmount/          ← screen
+│   │   ├── PaymentReview/      ← screen
+│   │   ├── SearchTransactions/ ← screen
+│   │   ├── TransactionDetail/  ← screen
+│   │   └── Shared/
+│   │       ├── Model/
+│   │       ├── Networking/
+│   │       └── Flow/
+│   │           ├── DigitalAccountCoordinator.swift
+│   │           └── DigitalAccountFlow.swift
+│   │
 │   └── Tasks/
 │       ├── TaskList/
 │       │   ├── Presentation/
@@ -207,6 +222,12 @@ ClaraCard/
     ├── RequestPerformer.swift
     └── ExpectedResponseType.swift
 ```
+
+---
+
+## Reference Implementations
+
+Two features are the canonical templates for this structure — **`Tasks`** (smallest complete module) and **`ClaraConta`** / Digital Account (largest, with sub-screens, a shared `Store`, and deep links). See [reference-implementations.md](reference-implementations.md) for what to copy and what to avoid.
 
 ---
 
