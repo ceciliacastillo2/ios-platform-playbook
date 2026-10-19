@@ -1,25 +1,30 @@
 # Dependency Management
 
-## Current State
+## Current State (October 2026)
 
-The app relies heavily on singletons for shared state. Session, feature flags, UI managers, and third-party SDKs are all accessed via `.shared` across all layers.
+The team has moved off "grab a singleton" toward a single container. `DependencyContainer` is now the app's only singleton and the place shared services are resolved — but the migration is not finished, and a long tail of `.shared` access remains.
 
-This makes unit testing nearly impossible and creates hidden dependencies between components.
+**Shared services now reached through the container**
 
-There are 9 singletons in the codebase:
+`AppDependencies` exposes the cross-cutting set — `logger`, `analytics`, `pasteboard`, `accessGate` — and each feature's `*Dependencies` bundle carries its own repositories and use cases. Newer features (`Tasks`, `ClaraConta`) consume these; older features still reach for globals.
 
-| Singleton | Type | Used in |
-|---|---|---|
-| `Session.shared` | User session / auth state | Coordinators, ViewModels, Models everywhere |
-| `RemoteConfigurationManager.shared` | Feature flags | Coordinators, ViewModels, Views, Models |
-| `SnackbarManager.shared` | UI toasts | 5+ coordinators |
-| `ZendeskManager.shared` | Support chat | 3 coordinators |
-| `RateAppManager.shared` | App rating prompts | 2 coordinators |
-| `ImagesRepository.shared` | Image caching | Unknown |
-| `LocalNotificationPublisher.shared` | Local notifications | Unknown |
-| `BackgroundService.shared` | Background uploads | RequestPerformer |
-| `SiftManager.shared` | Fraud detection | Unknown |
+**The remaining `.shared` surface** (occurrences across the repo)
 
+| Symbol | Occurrences | Where it leaks |
+|---|---:|---|
+| `Session.shared` | 143 | Coordinators, ViewModels, providers, models — everywhere |
+| `DependencyContainer.shared` | 69 | Feature assembly points, not just the composition root |
+| `AppRouter.shared` | 57 | Navigation |
+| `CLogger.shared` | 52 | Logging |
+| `DesignSystemConfig.shared` | 33 | UI |
+| `RemoteConfigurationManager.shared` | 31 | Views, Models, Coordinators, ViewModels |
+| `SnackbarManager.shared` | 24 | UI toasts |
+
+Inside `Features/` alone: `Session.shared` ×63, `DependencyContainer.shared` ×43, `CLogger.shared` ×35, `SnackbarManager.shared` ×23, `RemoteConfigurationManager.shared` ×15.
+
+Resolved since the original assessment: `ZendeskManager`, `SiftManager`, and `RateAppManager` no longer appear as `.shared` singletons, so they have been dropped from the migration table below.
+
+---
 
 ## Goal
 
@@ -27,7 +32,7 @@ All shared services injected via `DependencyContainer`. No feature module access
 
 **What success looks like**
 
-- No `.shared` call exists outside of `Core/DI` — every singleton is registered once and injected everywhere else.
+- No `.shared` call exists outside of `Core/Dependencies` — every singleton is registered once and injected everywhere else.
 - Every shared service is behind a protocol. Feature code never references a concrete SDK type.
 - A ViewModel can be unit tested by passing mock protocols — no real session, network, or SDK needed.
 - `Session.shared` is gone from feature modules. ViewModels and Coordinators receive `SessionProviding` at construction time.
@@ -37,10 +42,10 @@ All shared services injected via `DependencyContainer`. No feature module access
 
 ## Rules
 
-1. **No `.shared` access in feature modules** if a class calls `.shared`, it owns a hidden dependency the compiler cannot see or enforce
-2. **Every shared service must have a protocol**  the concrete type is registered in `Core/DI`, feature code only knows the protocol
-3. **Session state is injected, not grabbed**  ViewModels and Coordinators receive a `SessionProviding` instance, they never reach for `Session.shared`
-4. **Testability is the signal**  if a class cannot be unit tested without a real network or real session, it has a hidden singleton dependency
+1. **No `.shared` access in feature modules** — if a class calls `.shared`, it owns a hidden dependency the compiler cannot see or enforce.
+2. **Every shared service must have a protocol** — the concrete type is registered in `Core/Dependencies`, feature code only knows the protocol.
+3. **Session state is injected, not grabbed** — ViewModels and Coordinators receive a `SessionProviding` instance, they never reach for `Session.shared`.
+4. **Testability is the signal** — if a class cannot be unit tested without a real network or real session, it has a hidden singleton dependency.
 
 ---
 
@@ -48,12 +53,13 @@ All shared services injected via `DependencyContainer`. No feature module access
 
 | Singleton | Priority | Reason |
 |---|---|---|
-| `Session.shared` | High | God object, 15+ call sites, blocks all testing |
+| `Session.shared` | High | God object, 143 call sites, blocks all testing |
 | `RemoteConfigurationManager.shared` | High | Leaks into Views and Models — wrong layer |
+| `DependencyContainer.shared` | High | Should be referenced only at the composition root |
+| `AppRouter.shared` | Medium | Navigation state reached from outside the coordinator |
+| `CLogger.shared` | Medium | Already wrapped in `Core/Logging` — just needs injection |
 | `SnackbarManager.shared` | Medium | Easy to inject, contained to coordinators |
-| `ZendeskManager.shared` | Medium | Already wrapped in Core — just needs injection |
-| `SiftManager.shared` | Medium | Already wrapped in Core — just needs injection |
-| `RateAppManager.shared` | Low | Limited usage, low risk |
+| `DesignSystemConfig.shared` | Low | UI-only, low risk |
 | `ImagesRepository.shared` | Low | Contained, low business risk |
 | `LocalNotificationPublisher.shared` | Low | Usage unknown, investigate first |
 | `BackgroundService.shared` | Low | Single consumer, easy to refactor |
@@ -64,15 +70,15 @@ All shared services injected via `DependencyContainer`. No feature module access
 
 ```swift
 // Before — hidden global dependency
-class CardListViewModel {
+final class CardListViewModel {
     func load() {
-        let userId = Session.shared.userId
-        let flagEnabled = RemoteConfigurationManager.shared.isEnabled(.addToWallet)
+        let companyId = Session.shared.companyId
+        let flagEnabled = RemoteConfigurationManager.shared.isAddToWalletFeatureAvailable
     }
 }
 
 // After — explicit, injectable, testable
-class CardListViewModel {
+final class CardListViewModel {
     private let session: SessionProviding
     private let flags: FeatureFlagProviding
 
@@ -82,8 +88,8 @@ class CardListViewModel {
     }
 
     func load() {
-        let userId = session.userId
-        let flagEnabled = flags.isEnabled(.addToWallet)
+        let companyId = session.companyId
+        let flagEnabled = flags.isAddToWalletAvailable
     }
 }
 ```

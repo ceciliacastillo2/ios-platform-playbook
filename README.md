@@ -68,6 +68,44 @@ AI-assisted commands for navigating this playbook inside Claude Code.
 
 ---
 
+## Adoption Scorecard
+
+How the iOS codebase measures against this playbook. Snapshot taken 2026-10-19 on branch `feature/mob-4249-ios-re-organize-coordinators`.
+
+| Playbook initiative | Status | Evidence |
+|---|:--:|---|
+| Package by feature | 🟡 In progress | `Core/` extracted (107 files), features under `Features/`; but `Transactions`/`Reimbursement` still layer-shaped and 8 top-level legacy dirs remain |
+| Protocol adoption | 🟢 Strong | 146 files define `*RepositoryProtocol`, 143 `*UseCaseProtocol`; `CLAUDE.md` is protocol-first |
+| DI / no singletons | 🟡 Partial | `Core/Dependencies/DependencyContainer` used in 62 files, but `.shared` is still all over `Features/` |
+| Design system | 🟢 Strong | `import DesignSystem` in 240 files; `ClaraColor` down to 171; 31 raw `Color` literals left |
+| Unit tests | 🟢 Strong | 419 test files, Swift Testing only (262 `import Testing`, 0 XCTest) |
+| Snapshot tests | 🟢 Strong | 44 snapshot files, 348 reference PNGs, documented in `SNAPSHOT_TESTING.md` |
+| CI/CD | 🟡 Partial | Fastlane + SonarCloud + auto-tag/release on merge to `main`; no PR build/test workflow (Phase 3 not reached) |
+| Error standardization | 🟡 Partial | `*Error` types exist, but `ClaraCardError` conformance is sparse (10 files) |
+| Domain ownership | 🟢 Good | `.github/CODEOWNERS` present |
+| Architecture docs | 🟡 Drifted | This playbook and the repo's `.claude/context/*` exist but describe different structures (see below) |
+
+**Legend:** 🟢 Strong · 🟡 Partial / in progress · 🔴 Not started
+
+### Naming drift to reconcile
+
+This playbook describes the *target* layout; the repo currently uses different names for the same concepts. Neither is wrong, but they need to converge so the playbook stays a usable reference.
+
+| Playbook (target) | Repo (current) |
+|---|---|
+| `Modules/` · `Modules/Shared/` | `Features/` · `Features/Shared/` |
+| `Core/DI` | `Core/Dependencies` (`DependencyContainer`) |
+| `Core/FeatureFlags` | `Core/Experimentation` |
+| `Core/Security` (Sift) | `Core/Risk` |
+| `Core/PushNotifications` | `Core/Notifications` |
+| `Core/Localization` | `Core/L10n` |
+| `Core/Wallet` (Thales) | `Core/Thales` |
+| `Core/Session` | `Models/Session` |
+| `Core/Extensions` | top-level `Extensions/` |
+| `Screen/{Presentation, Model, Data, Networking}` | `Screen/{Domain, Data, View, ViewModel}` |
+
+---
+
 ## Current Focus
 
 > These topics are actively being worked on or defined as of Q2 2026.

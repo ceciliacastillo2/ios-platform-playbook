@@ -1,13 +1,17 @@
 # Core/FeatureFlags
 
-## Current State
+## Current State (October 2026)
 
-Feature flags are managed via LaunchDarkly and centralised in `RemoteConfigurationManager`. All flags are defined in one place, which is good for discoverability.
+Feature flags are managed via LaunchDarkly and centralised in `RemoteConfigurationManager` (currently at `Core/Experimentation/RemoteConfigurationManager.swift`; `Core/FeatureFlags/` is the target home). All flags are defined in one place, which is good for discoverability.
 
-However, the current implementation has two structural problems:
+Progress since the original assessment:
 
-1. **Singleton access**  feature code calls `RemoteConfigurationManager.shared` directly across all layers (views, models, coordinators, view models, use cases)
-2. **No protocol abstraction**  LaunchDarkly is a concrete dependency with no interface, making it impossible to mock in tests or swap providers
+- Some features have introduced a per-feature remote-config seam — `TasksRemoteConfiguring`, `ClaraContaRemoteConfiguring` — so flag reads can be faked in tests without initialising LaunchDarkly.
+
+Still outstanding:
+
+1. **Singleton access**  feature code calls `RemoteConfigurationManager.shared` directly across all layers (views, models, coordinators, view models, use cases). 31 call sites across the repo.
+2. **No app-wide protocol abstraction**  LaunchDarkly is still a concrete dependency with no single shared interface; the per-feature seams are local, not a `FeatureFlagProviding` protocol in Core.
 
 ---
 

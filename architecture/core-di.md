@@ -14,6 +14,35 @@ Converge on a single dependency injection pattern. The specific mechanism is sti
 
 ---
 
+## Current State (October 2026)
+
+The team has converged on **constructor injection through a single container**. That container exists and is the direction of travel; adoption is still partial.
+
+**The container**
+
+| File | Role |
+|---|---|
+| `Core/Dependencies/DependencyContainer.swift` | The app's single container and its only singleton. Conforms to `AppDependencies`, and to each feature's `*Dependencies` protocol via extensions. |
+| `Core/Dependencies/AppDependencies.swift` | Cross-cutting contract every feature inherits: `logger`, `analytics`, `pasteboard`, `accessGate`. |
+| `Core/Dependencies/FeatureDependencies.swift` | Marker protocol each feature's `*Dependencies` protocol inherits. |
+
+**The pattern**
+
+- Each feature declares a `*Dependencies` protocol and a `*DependenciesProvider` (e.g. `TasksDependenciesProvider`, `ClaraContaDependenciesProvider`).
+- The provider assembles the feature's repositories and use cases.
+- A `DependencyContainer+<Feature>` extension satisfies the feature's protocol from the container.
+- The injection chain is **Repository protocol → UseCase → ViewModel**, all passed via `init`.
+
+**What is not yet true**
+
+- `.shared` is still reached directly inside feature code — `Session.shared`, `CLogger.shared`, `SnackbarManager.shared`, `RemoteConfigurationManager.shared`, and `AppRouter.shared` all appear under `Features/`.
+- `DependencyContainer.shared` is referenced from feature assembly points, not only at the composition root.
+- Coverage is uneven: newer features (`Tasks`, `ClaraConta`) go through their `Dependencies` bundle; older ones still reach for globals. Even the reference providers still default some values from `Session.shared` inside the provider.
+
+> **Two patterns are documented in this file.** The container-based constructor injection above is what the codebase uses today. The `@Inject` / `DependencyValues` pattern further down is the alternative mechanism that was under evaluation — it is kept here for reference, not as the current standard.
+
+---
+
 ## The Problem
 
 Right now there are three different ways dependencies get created in the same codebase. No single approach won.

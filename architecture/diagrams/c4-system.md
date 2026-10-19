@@ -10,7 +10,7 @@ graph LR
 
   APP["🏦 ClaraCard iOS App
   ─────────────────────
-  Auth · Cards · Tasks
+  Auth · Cards · Tasks · ClaraConta
   Transactions · Reimbursements · Account"]
 
   subgraph BACKEND["Clara Infrastructure"]
@@ -128,6 +128,8 @@ graph TB
       Own set of screens"]
       Account["Account
       Own set of screens"]
+      ClaraConta["ClaraConta
+      Digital Account · PIX deposit & pay"]
     end
 
     NET["ClaraNetworking  —  internal Swift package
@@ -163,6 +165,7 @@ graph TB
   style Transactions fill:#f0fdf4,stroke:#16a34a,color:#000
   style Reimbursements fill:#f0fdf4,stroke:#16a34a,color:#000
   style Account fill:#f0fdf4,stroke:#16a34a,color:#000
+  style ClaraConta fill:#f0fdf4,stroke:#16a34a,color:#000
   style ClaraCard fill:#f8fafc,stroke:#64748b
   style API fill:#dbeafe,stroke:#3b82f6,color:#000
 ```

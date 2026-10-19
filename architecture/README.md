@@ -7,6 +7,7 @@ System design, guiding principles, and Core module documentation for the ClaraCa
 | File | What it covers |
 |---|---|
 | [overview.md](overview.md) | App architecture goals, folder structure, and layer responsibilities |
+| [reference-implementations.md](reference-implementations.md) | The two canonical feature templates — `Tasks` and `ClaraConta` |
 | [dependency-management.md](dependency-management.md) | Singleton audit and the migration plan to full injection |
 | [core-di.md](core-di.md) | Dependency injection — the problem, the goal, and the rules |
 | [core-feature-flags.md](core-feature-flags.md) | Feature flag protocol, LaunchDarkly isolation, and current flags |

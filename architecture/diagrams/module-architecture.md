@@ -3,6 +3,8 @@
 How the app is layered and how feature modules are structured internally.
 Use this to onboard engineers and align on where new code belongs.
 
+> **Reference implementations:** `Tasks` (smallest complete module) and `ClaraConta` / Digital Account (largest, with sub-screens, a shared `Store`, and deep links). See [../reference-implementations.md](../reference-implementations.md).
+
 ---
 
 ## 1 · Core vs Modules
@@ -41,6 +43,7 @@ graph TB
     Transactions["Transactions"]
     Reimbursements["Reimbursements"]
     Account["Account"]
+    ClaraConta["ClaraConta"]
   end
 
   API[("Clara Backend API")]
@@ -75,6 +78,7 @@ graph TB
   style Transactions fill:#f0fdf4,stroke:#16a34a,color:#000
   style Reimbursements fill:#f0fdf4,stroke:#16a34a,color:#000
   style Account fill:#f0fdf4,stroke:#16a34a,color:#000
+  style ClaraConta fill:#f0fdf4,stroke:#16a34a,color:#000
   style API fill:#dbeafe,stroke:#3b82f6,color:#000
 ```
 
